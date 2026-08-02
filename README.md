@@ -1,26 +1,25 @@
 # Homebridge Hyundai Bluelink
 
-[![npm version](https://badge.fury.io/js/homebridge-bluelink-3-0.svg)](https://badge.fury.io/js/homebridge-bluelink-3-0)
-![Build Status)](https://img.shields.io/github/workflow/status/cnpittman/homebridge-bluelink-3.0/build/main)
+[![npm version](https://badge.fury.io/js/homebridge-bluelink-3-0.svg)](https://www.npmjs.com/package/homebridge-bluelink-3-0)
+[![verified-by-homebridge](https://badgen.net/badge/homebridge/verified/purple)](https://homebridge.io)
 
-This is a [Homebridge](https://homebridge.io) platform plugin that uses [bluelinky](https://github.com/Hacksore/bluelinky) to connect your Hyundai or Kia vehicle to HomeKit, letting you control your vehicle using Siri, shortcuts, or the Home app.
+A [Homebridge](https://homebridge.io) plugin that connects your Hyundai or Kia to HomeKit, so you can lock, unlock, and remote start from the Home app or Siri.
 
-This is a maintained fork of [athal7/homebridge-hyundai-bluelink](https://github.com/athal7/homebridge-hyundai-bluelink), published as `homebridge-bluelink-3-0`.
+**Install:** [homebridge-bluelink-3-0 on npm](https://www.npmjs.com/package/homebridge-bluelink-3-0) · current version **2.4.0**
 
-This fork fixes remote commands on newer US vehicles, which do not work through bluelinky. See [US Region Command Reliability](#us-region-command-reliability).
+## Credits
 
-Developed with the help of [Claude Code](https://claude.com/claude-code).
+* [athal7/homebridge-hyundai-bluelink](https://github.com/athal7/homebridge-hyundai-bluelink) — the original plugin this is forked from.
+* [Hacksore/bluelinky](https://github.com/Hacksore/bluelinky) — the Bluelink/UVO API library this is built on.
+* [Hyundai-Kia-Connect/hyundai_kia_connect_api](https://github.com/Hyundai-Kia-Connect/hyundai_kia_connect_api) — the actively maintained Python implementation. Comparing against its `HyundaiBlueLinkApiUSA.py` is what identified the fixes below.
 
 ## Installation
 
-This plugin can be installed from the Homebridge web console:
-1. Log in to the console and go to the `Plugins` tab
+1. In the [Homebridge](https://homebridge.io) UI, open the **Plugins** tab
 2. Search for `homebridge-bluelink-3-0` and install it
-3. Edit the settings in the UI, or directly in the `config.json` file following the schema below
+3. Configure it in the UI, or in `config.json` as below
 
 ## Configuration
-
-### Sample
 
 ```json
 "platforms": [
@@ -50,63 +49,37 @@ This plugin can be installed from the Homebridge web console:
 ],
 ```
 
-### Notes
 * `vehicles.maxRange` is optional
-* `remoteStart.airCtrl` controls whether the HVAC is turned on
-* `remoteStart.airTempvalue` is the temperature in Fahrenheit
-* `remoteStart.igniOnDuration` must be between 1 and 10, otherwise remote start will fail
+* `remoteStart.airCtrl` turns on the HVAC; `airTempvalue` is in Fahrenheit
+* `remoteStart.igniOnDuration` must be 1–10, or remote start fails
 
-## US Region Command Reliability
+## What's Fixed in 2.4.0
 
-On newer US vehicles, lock/unlock/start/stop through bluelinky silently do nothing. Hyundai returns `200` and issues a transaction id, and the command then stays `PENDING` forever - never an error, and the vehicle never acts on it. Status reads work normally throughout, which makes the plugin look healthy while every control is dead.
+Verified on a 2026 Sonata Hybrid with Homebridge v2.
 
-**The cause is the `gen` header**, which tells Hyundai's backend which telematics generation to dispatch a command to. bluelinky's US controller does not read the real value; it derives one:
+| Bug | Fix |
+| --- | --- |
+| **Remote commands silently did nothing** on newer US vehicles. Hyundai returned `200` with a transaction id that stayed `PENDING` forever. bluelinky guesses the car's telematics generation as `modelYear > 2016 ? '2' : '1'` — a rule from when gen 2 was current — so recent cars (gen 3 / `ccNC`) get commands queued to a generation they never answer on. Status reads don't use dispatch, so they kept working and the plugin looked healthy. | Read the real `vehicleGeneration` from Hyundai's enrollment details. Commands now confirm in ~20s. bluelinky's Canadian controller already reads the real value; only the US path guesses. |
+| **Success was reported when Hyundai *accepted* a request**, not when the car acted on it. | Follow the transaction via `rmt/getRunningStatus` until the vehicle reports `SUCCESS` or `ERROR`. |
+| **HomeKit always showed "No Response"** — it waits ~10s, far less than a car takes to act. | Acknowledge on acceptance and confirm in the background. |
+| **Locks span "Unlocking…" forever** when a command didn't take. | Settle the target state onto what the vehicle actually reports. |
+| **A leaked `setInterval`** on every lock/unlock polled the API once a minute forever (intended: hourly). | Use a single cleared timeout. |
+| **Credentials were written to the log in plaintext**, including the PIN that authorizes remote commands. | Redacted. |
+| **Crashes on current Homebridge/Node**: `BatteryService` was renamed, and property initializer order broke under newer TypeScript targets. | Updated for Homebridge v2 and Node 20. |
+| **UTC offset hardcoded to `-5`.** | Computed from the local clock. |
 
-```js
-generation: t.modelYear > 2016 ? '2' : '1'
-```
-
-That rule dates from when generation 2 was current, so every recent vehicle is announced as gen 2. A 2026 Sonata Hybrid is gen 3 (`ccNC Lite`). The backend accepts the command, queues it against generation 2, and the vehicle never answers on that path. Status reads do not depend on dispatch, which is why they are unaffected. bluelinky's *Canadian* controller reads the real value (`genType`); only the US path guesses.
-
-Hyundai reports the true value as `vehicleGeneration` in the account's enrollment details. This fork reads it from there, caches it, and falls back to bluelinky's value only if it cannot be read. On the vehicle above this is the difference between a command that hangs indefinitely and one confirmed complete in about 20 seconds.
-
-### Also fixed along the way
-
-* **Confirmation.** bluelinky reports success when Hyundai *accepts* a request. This fork follows `rmt/getRunningStatus` until the vehicle reports `SUCCESS` or `ERROR`, so HomeKit reflects what the car did rather than what the queue accepted.
-* **HomeKit timing.** HomeKit waits roughly ten seconds before showing "No Response", far less than a vehicle takes to act, so the command is acknowledged on acceptance and confirmed in the background.
-* **Request shape.** Commands use the headers and JSON body Hyundai's own client sends (`accessToken`, `blueLinkServicePin`, `clientSecret`) rather than bluelinky's.
-* **UTC offset.** bluelinky hardcodes `-5`; this computes it from the local clock.
-
-Other regions (CA/EU) are unaffected and continue to use bluelinky's built-in methods.
+Other regions (CA/EU) are unchanged and still use bluelinky's built-in methods.
 
 ## Known Issues
 
-### SSL Key too Small
+**Status refresh delay** — per Hyundai's [rate limits](https://github.com/Hacksore/bluelinky/wiki/API-Rate-Limits), status updates hourly. Changes made elsewhere (Bluelink app, key fob) may take up to an hour to appear.
 
-Log:
+**One request at a time** — Hyundai tracks a single outstanding remote request per vehicle; while one is queued the official app reports `[HT_533] a previous request is pending`. A forced status refresh is itself a remote request, so it can't be used to confirm a command that's still in flight.
 
-```
-[Hyundai] Client Error GotError [RequestError]: write EPROTO 1995553232:error:141A318A:SSL routines:tls_process_ske_dhe:dh key too small:../deps/openssl/openssl/ssl/statem/statem_clnt.c:2158:
-```
+**Auto-relock** — many Hyundais relock automatically if no door is opened within ~30s of a remote unlock. Every command this plugin sends is logged first, so the log shows whether a relock came from Homebridge.
 
-This happens because the Bluelink API used has insecure SSL settings.
+**SSL key too small** — if you see `dh key too small`, edit `/etc/ssl/openssl.cnf` and change `CipherString = DEFAULT@SECLEVEL=2` to `SECLEVEL=1` ([source](https://github.com/FreshRSS/FreshRSS/issues/3029)).
 
-Workaround: Edit `/etc/ssl/openssl.cnf`, change the line `CipherString = DEFAULT@SECLEVEL=2` to `CipherString = DEFAULT@SECLEVEL=1` (change 2 to 1 at end of line)
+---
 
-Source: https://github.com/FreshRSS/FreshRSS/issues/3029
-
-### Status Refresh Delay
-
-Due to Hyundai's [API Rate Limits](https://github.com/Hacksore/bluelinky/wiki/API-Rate-Limits), the car status (locked, on/off, range) is only updated once per hour. Actions taken from homebridge get automatically refreshed, but actions taken elsewhere (e.g. bluelink app, key fab) may not display in homebridge for up to an hour.
-
-### Pending Requests Block Each Other
-
-Hyundai's backend only tracks one outstanding remote request per vehicle. While one is queued, further commands are refused - the official Bluelink app reports `Unable to send your request because a previous request is pending. [HT_533]`. A queued command can take a minute or more to clear, especially if the vehicle is asleep.
-
-This matters because forcing a status refresh is itself a remote request, not just a read. A refresh issued while a command is still queued is refused, and the cached, pre-command reading comes back instead - so a command cannot be confirmed by refreshing status, because the command being confirmed is what blocks the refresh. This plugin follows the command's transaction id via `rmt/getRunningStatus` instead, which queries the backend about the transaction rather than waking the vehicle and so is not blocked.
-
-Hyundai also applies daily rate limits to remote requests (see [bluelinky#80](https://github.com/Hacksore/bluelinky/issues/80) and their [API Rate Limits](https://github.com/Hacksore/bluelinky/wiki/API-Rate-Limits) notes), so it is worth avoiding unnecessary requests regardless.
-
-### Vehicle Auto-Relock
-
-If a remote unlock is followed by the doors relocking a short time later without anything being sent, that is normally the vehicle's own security behavior - many Hyundais automatically relock if no door is opened within about 30 seconds of a remote unlock. Every command this plugin sends is logged before it goes out (`Locking Vehicle`, `Unlocking Vehicle`, and so on), so the log will show whether a relock actually came from Homebridge.
+Developed with [Claude Code](https://claude.com/claude-code).
