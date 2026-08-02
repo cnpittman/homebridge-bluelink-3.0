@@ -37,6 +37,23 @@ export class Lock extends HyundaiService {
         this.lockCurrentState,
       );
     }
+
+    // Settle the target state onto whatever the vehicle actually reports.
+    // HomeKit renders a lock whose target disagrees with its current state as
+    // permanently "Locking..."/"Unlocking..." with a spinner, so a command the
+    // vehicle never carried out would otherwise spin forever.
+    if (this._shouldLock !== undefined && this._shouldLock !== this.isLocked) {
+      this.log.debug(
+        `Vehicle reports ${this.isLocked ? 'locked' : 'unlocked'} but ` +
+          `${this._shouldLock ? 'lock' : 'unlock'} was requested - ` +
+          'reverting the target state HomeKit shows',
+      );
+    }
+    this._shouldLock = undefined;
+    this.service?.updateCharacteristic(
+      this.Characteristic.LockTargetState,
+      this.lockTargetState,
+    );
   }
   lock(cb): void {
     this.log.info('Locking Vehicle');

@@ -148,6 +148,8 @@ export class UsCommandClient {
       extraHeaders['APPCLOUD-VIN'] = this.vehicle.vehicleConfig.vin;
     }
 
+    extraHeaders['REFRESH'] = 'false';
+
     const response = await this.request('POST', path, body, extraHeaders);
     const responseText = await safeText(response);
 
@@ -263,7 +265,10 @@ export class UsCommandClient {
       'sec-fetch-dest': 'empty',
       'sec-fetch-mode': 'cors',
       'sec-fetch-site': 'same-origin',
-      'refresh': 'false',
+      // No lowercase 'refresh' default here. HTTP header names are case
+      // insensitive, so pairing it with the 'REFRESH' the status call adds
+      // makes fetch collapse the two into "false, true" and the refresh is
+      // silently lost. Callers set REFRESH explicitly instead.
       'encryptFlag': 'false',
       'brandIndicator': vehicleConfig.brandIndicator,
       'client_id': CLIENT_ID,
