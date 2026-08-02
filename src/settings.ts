@@ -6,4 +6,4 @@ export const PLATFORM_NAME = 'Hyundai';
 /**
  * This must match the name of your plugin as defined the package.json
  */
-export const PLUGIN_NAME = 'homebridge-hyundai-bluelink';
+export const PLUGIN_NAME = 'homebridge-bluelink-3-0';

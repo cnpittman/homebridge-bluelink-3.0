@@ -22,11 +22,11 @@ export class VehicleAccessory extends EventEmitter {
     setInterval(this.fetchStatus.bind(this), REFRESH_INTERVAL);
   }
 
-  fetchStatus(): void {
+  fetchStatus(force = false): void {
     if (!this.isFetching) {
       this.isFetching = true;
       this.vehicle
-        .status({ refresh: false, parsed: true })
+        .status({ refresh: force, parsed: true })
         .then(response => {
           this.platform.log.debug('Received status update', response);
           this.emit('update', <VehicleStatus>response);
@@ -34,6 +34,7 @@ export class VehicleAccessory extends EventEmitter {
         })
         .catch(error => {
           this.platform.log.error('Status fetch error', error);
+          this.isFetching = false;
         });
     }
   }

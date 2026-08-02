@@ -39,19 +39,37 @@ export class Lock extends HyundaiService {
   }
   lock(cb): void {
     this.log.info('Locking Vehicle');
-    this.vehicle
-      .lock()
-      .then(response => this.log.info('Lock Response', response))
-      .catch(reason => this.log.error('Lock Fail', reason))
-      .finally(() => cb(null));
+    const command = this.usCommandClient
+      ? this.usCommandClient.lock()
+      : this.vehicle.lock().then(response => this.log.info('Lock Response', response));
+
+    command
+      .then(() => {
+        this.va.fetchStatus(true);
+        cb(null);
+      })
+      .catch(reason => {
+        this.log.error('Lock Fail', reason);
+        cb(reason);
+      });
   }
   unlock(cb): void {
     this.log.info('Unlocking Vehicle');
-    this.vehicle
-      .unlock()
-      .then(response => this.log.info('Unlock Response', response))
-      .catch(reason => this.log.error('Unlock Fail', reason))
-      .finally(() => cb(null));
+    const command = this.usCommandClient
+      ? this.usCommandClient.unlock()
+      : this.vehicle
+          .unlock()
+          .then(response => this.log.info('Unlock Response', response));
+
+    command
+      .then(() => {
+        this.va.fetchStatus(true);
+        cb(null);
+      })
+      .catch(reason => {
+        this.log.error('Unlock Fail', reason);
+        cb(reason);
+      });
   }
   get lockCurrentState(): number {
     const { LockCurrentState } = this.Characteristic;

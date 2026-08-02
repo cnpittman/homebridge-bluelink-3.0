@@ -24,19 +24,37 @@ export class Ignition extends HyundaiService {
   }
   start(cb): void {
     this.log.info('Starting Vehicle');
-    this.vehicle
-      .start(this.config.remoteStart)
-      .then(response => this.log.info('Start Response', response))
-      .catch(reason => this.log.error('Start Fail', reason))
-      .finally(() => cb(null));
+    const command = this.usCommandClient
+      ? this.usCommandClient.start(this.config.remoteStart)
+      : this.vehicle
+          .start(this.config.remoteStart)
+          .then(response => this.log.info('Start Response', response));
+
+    command
+      .then(() => {
+        this.va.fetchStatus(true);
+        cb(null);
+      })
+      .catch(reason => {
+        this.log.error('Start Fail', reason);
+        cb(reason);
+      });
   }
   stop(cb): void {
     this.log.info('Stopping Vehicle');
-    this.vehicle
-      .stop()
-      .then(response => this.log.info('Stop Response', response))
-      .catch(reason => this.log.error('Stop Fail', reason))
-      .finally(() => cb(null));
+    const command = this.usCommandClient
+      ? this.usCommandClient.stop()
+      : this.vehicle.stop().then(response => this.log.info('Stop Response', response));
+
+    command
+      .then(() => {
+        this.va.fetchStatus(true);
+        cb(null);
+      })
+      .catch(reason => {
+        this.log.error('Stop Fail', reason);
+        cb(reason);
+      });
   }
 
   setCurrentState(status: VehicleStatus): void {

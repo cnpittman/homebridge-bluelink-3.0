@@ -8,7 +8,7 @@ export class Motor extends HyundaiService {
   private chargingState: number = 2; //default to NOT_CHARGEABLE
   private charging: Boolean = false;
   name = 'Motor';
-  serviceType = 'BatteryService';
+  serviceType = 'Battery';
   lowBatteryThreshold = 25;
 
   initService(): void {

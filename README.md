@@ -1,20 +1,17 @@
 # Homebridge Hyundai Bluelink
 
-[![verified-by-homebridge](https://badgen.net/badge/homebridge/verified/purple)](https://github.com/homebridge/homebridge/wiki/Verified-Plugins)
-[![npm version](https://badge.fury.io/js/homebridge-hyundai-bluelink.svg)](https://badge.fury.io/js/homebridge-hyundai-bluelink)
-![Build Status)](https://img.shields.io/github/workflow/status/athal7/homebridge-hyundai-bluelink/build/main)
+[![npm version](https://badge.fury.io/js/homebridge-bluelink-3-0.svg)](https://badge.fury.io/js/homebridge-bluelink-3-0)
+![Build Status)](https://img.shields.io/github/workflow/status/cnpittman/homebridge-bluelink-3.0/build/main)
 
 This is a [Homebridge](https://homebridge.io) platform plugin that uses [bluelinky](https://github.com/Hacksore/bluelinky) to connect your Hyundai or Kia vehicle to HomeKit, which allows you control your vehicle using Siri, shortcuts, or the Home app.
 
-## Maintainer Needed
-
-I no longer use Homebridge/HOOBS, and thus cannot maintain this plugin. Reach out if you are interested.
+This is a maintained fork of [athal7/homebridge-hyundai-bluelink](https://github.com/athal7/homebridge-hyundai-bluelink), published as `homebridge-bluelink-3-0`.
 
 ## Installation
 
 This plugin can be installed from the Homebridge web console:
 1. Log in to the console and go to the `Plugins` tab
-2. Search for `Bluelink`, and install `Homebridge Hyundai BlueLink`
+2. Search for `homebridge-bluelink-3-0` and install it
 3. Edit the settings in the UI, or directly in the `config.json` file following the schema below
 
 ## Configuration

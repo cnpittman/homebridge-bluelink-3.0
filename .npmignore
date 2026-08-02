@@ -1,6 +1,9 @@
 # Ignore source code
 src
 
+# Claude Code local session files
+.claude
+
 # ------------- Defaults ------------- #
 
 # gitHub actions
@@ -101,7 +104,6 @@ web_modules/
 
 # Nuxt.js build / generate output
 .nuxt
-dist
 
 # Gatsby files
 .cache/
