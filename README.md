@@ -59,7 +59,8 @@ For `region: "US"`, bluelinky's lock/unlock/start/stop calls only confirm that H
 For US vehicles, this fork routes those four commands through its own client instead, which:
 * sends the request in the exact form Hyundai's API expects (bluelinky's own lock/unlock calls use a form-encoded body, not JSON - sending JSON gets a `200` response but silently does nothing)
 * polls the vehicle's real status afterward and waits for the door lock / ignition state to actually change before reporting success back to HomeKit
-* gives up after 10 poll attempts or 30 seconds, whichever comes first, and simply reports the vehicle's current state rather than erroring - HomeKit's own request will typically have already timed out well before that point anyway
+* reports success back to HomeKit as soon as Hyundai accepts the command, then keeps confirming in the background - HomeKit only waits about ten seconds before showing "No Response", while the vehicle routinely takes longer than that to act, so waiting for confirmation before answering guaranteed a "No Response" no matter what the car did
+* gives up confirming after 10 poll attempts or 30 seconds, whichever comes first, and simply lets the next status refresh report the vehicle's real state rather than erroring
 
 Other regions (CA/EU) are unaffected and continue to use bluelinky's built-in methods.
 
@@ -83,6 +84,14 @@ Source: https://github.com/FreshRSS/FreshRSS/issues/3029
 
 Due to Hyundai's [API Rate Limits](https://github.com/Hacksore/bluelinky/wiki/API-Rate-Limits), the car status (locked, on/off, range) is only updated once per hour. Actions taken from homebridge get automatically refreshed, but actions taken elsewhere (e.g. bluelink app, key fab) may not display in homebridge for up to an hour.
 
-### Daily Command Quota
+### Pending Requests Block Each Other
 
-Hyundai's US backend enforces a hard daily quota on remote commands (reportedly around 10 lock actions and 30 remote requests total per day - see [bluelinky#80](https://github.com/Hacksore/bluelinky/issues/80)). Once exhausted, commands keep returning a "success" response but stop actually reaching the vehicle, and this won't be limited to Homebridge - the official Bluelink app will show the same stuck behavior until the quota resets. If lock/unlock suddenly stops working after a lot of testing in a short window, this is the most likely cause; just wait for the quota to reset rather than retrying repeatedly.
+Hyundai's backend only tracks one outstanding remote request per vehicle. While one is queued, further commands are refused - the official Bluelink app reports `Unable to send your request because a previous request is pending. [HT_533]`. A queued command can take a minute or more to clear, especially if the vehicle is asleep.
+
+This matters because forcing a status refresh is itself a remote request, not just a read. Rapidly polling for confirmation with `REFRESH: true` can therefore queue up behind - and block - the very command it is trying to confirm. This plugin forces at most one refresh per command and reads Hyundai's cached status for the rest.
+
+Hyundai also applies daily rate limits to remote requests (see [bluelinky#80](https://github.com/Hacksore/bluelinky/issues/80) and their [API Rate Limits](https://github.com/Hacksore/bluelinky/wiki/API-Rate-Limits) notes), so it is worth avoiding unnecessary requests regardless.
+
+### Vehicle Auto-Relock
+
+If a remote unlock is followed by the doors relocking a short time later without anything being sent, that is normally the vehicle's own security behavior - many Hyundais automatically relock if no door is opened within about 30 seconds of a remote unlock. Every command this plugin sends is logged before it goes out (`Locking Vehicle`, `Unlocking Vehicle`, and so on), so the log will show whether a relock actually came from Homebridge.

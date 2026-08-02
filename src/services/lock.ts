@@ -1,9 +1,10 @@
-import { HyundaiService } from './base';
+import { HyundaiService, once } from './base';
 import { VehicleStatus } from 'bluelinky/dist/interfaces/common.interfaces';
 
 export class Lock extends HyundaiService {
   private _shouldLock?: boolean;
   private isLocked?: boolean;
+  private resetTimer?: NodeJS.Timeout;
   name = 'Doors';
   serviceType = 'LockMechanism';
 
@@ -39,39 +40,58 @@ export class Lock extends HyundaiService {
   }
   lock(cb): void {
     this.log.info('Locking Vehicle');
-    const command = this.usCommandClient
-      ? this.usCommandClient.lock()
-      : this.vehicle.lock().then(response => this.log.info('Lock Response', response));
+    const respond = once(cb);
 
-    command
-      .then(() => {
-        // usCommandClient already forced one refresh while polling for
-        // confirmation - forcing another here would just spend more of
-        // Hyundai's daily remote-command quota for no benefit.
-        this.va.fetchStatus(!this.usCommandClient);
-        cb(null);
+    if (this.usCommandClient) {
+      this.usCommandClient
+        .lock(() => respond(null))
+        // usCommandClient already forced one refresh while confirming, so
+        // read Hyundai's cache here rather than waking the car again.
+        .then(() => this.va.fetchStatus(false))
+        .catch(reason => {
+          this.log.error('Lock Fail', reason);
+          respond(reason);
+        });
+      return;
+    }
+
+    this.vehicle
+      .lock()
+      .then(response => {
+        this.log.info('Lock Response', response);
+        this.va.fetchStatus(true);
+        respond(null);
       })
       .catch(reason => {
         this.log.error('Lock Fail', reason);
-        cb(reason);
+        respond(reason);
       });
   }
   unlock(cb): void {
     this.log.info('Unlocking Vehicle');
-    const command = this.usCommandClient
-      ? this.usCommandClient.unlock()
-      : this.vehicle
-          .unlock()
-          .then(response => this.log.info('Unlock Response', response));
+    const respond = once(cb);
 
-    command
-      .then(() => {
-        this.va.fetchStatus(!this.usCommandClient);
-        cb(null);
+    if (this.usCommandClient) {
+      this.usCommandClient
+        .unlock(() => respond(null))
+        .then(() => this.va.fetchStatus(false))
+        .catch(reason => {
+          this.log.error('Unlock Fail', reason);
+          respond(reason);
+        });
+      return;
+    }
+
+    this.vehicle
+      .unlock()
+      .then(response => {
+        this.log.info('Unlock Response', response);
+        this.va.fetchStatus(true);
+        respond(null);
       })
       .catch(reason => {
         this.log.error('Unlock Fail', reason);
-        cb(reason);
+        respond(reason);
       });
   }
   get lockCurrentState(): number {
@@ -97,10 +117,17 @@ export class Lock extends HyundaiService {
   }
   set shouldLock(value: boolean) {
     this._shouldLock = value;
-    // Check on status & reset after 1 minute
-    setInterval(() => {
+    // Check on status & reset after 1 minute. This has to be a timeout, not
+    // an interval - an interval here is never cleared, so every lock/unlock
+    // leaks another timer that polls Hyundai's API once a minute for as long
+    // as Homebridge runs (the intended refresh rate is once an hour).
+    if (this.resetTimer) {
+      clearTimeout(this.resetTimer);
+    }
+    this.resetTimer = setTimeout(() => {
       this.va.fetchStatus();
       this._shouldLock = undefined;
+      this.resetTimer = undefined;
     }, 1000 * 60);
   }
 }

@@ -65,3 +65,18 @@ export abstract class HyundaiService {
   abstract initService(): void;
   abstract setCurrentState(status: VehicleStatus): void;
 }
+
+// Commands acknowledge HomeKit as soon as the request is accepted and then
+// keep confirming in the background, so the success and failure paths can
+// both end up calling back. HomeKit throws if a characteristic callback fires
+// twice, so make sure only the first one counts.
+export function once(cb): (reason?) => void {
+  let called = false;
+  return reason => {
+    if (called) {
+      return;
+    }
+    called = true;
+    cb(reason ?? null);
+  };
+}

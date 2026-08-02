@@ -41,19 +41,30 @@ export class UsCommandClient {
     private readonly log: Logger,
   ) {}
 
-  lock(): Promise<void> {
-    return this.executeAndConfirm('Lock', 'rcs/rdo/off', this.vinForm(), refresh =>
-      this.doorLockIs(true, refresh),
+  lock(onAccepted?: () => void): Promise<void> {
+    return this.executeAndConfirm(
+      'Lock',
+      'rcs/rdo/off',
+      this.vinForm(),
+      refresh => this.doorLockIs(true, refresh),
+      { onAccepted },
     );
   }
 
-  unlock(): Promise<void> {
-    return this.executeAndConfirm('Unlock', 'rcs/rdo/on', this.vinForm(), refresh =>
-      this.doorLockIs(false, refresh),
+  unlock(onAccepted?: () => void): Promise<void> {
+    return this.executeAndConfirm(
+      'Unlock',
+      'rcs/rdo/on',
+      this.vinForm(),
+      refresh => this.doorLockIs(false, refresh),
+      { onAccepted },
     );
   }
 
-  start(options: VehicleStartOptions): Promise<void> {
+  start(
+    options: VehicleStartOptions,
+    onAccepted?: () => void,
+  ): Promise<void> {
     const merged = {
       airCtrl: false,
       airTempvalue: 70,
@@ -78,13 +89,17 @@ export class UsCommandClient {
       { json: body },
       refresh => this.engineIs(true, refresh),
       // bluelinky overrides the UTC offset header specifically for start.
-      { offset: '-4' },
+      { onAccepted, extraHeaders: { offset: '-4' } },
     );
   }
 
-  stop(): Promise<void> {
-    return this.executeAndConfirm('Stop', 'rcs/rsc/stop', undefined, refresh =>
-      this.engineIs(false, refresh),
+  stop(onAccepted?: () => void): Promise<void> {
+    return this.executeAndConfirm(
+      'Stop',
+      'rcs/rsc/stop',
+      undefined,
+      refresh => this.engineIs(false, refresh),
+      { onAccepted },
     );
   }
 
@@ -100,9 +115,17 @@ export class UsCommandClient {
     path: string,
     body: RequestBody | undefined,
     isConfirmed: (refresh: boolean) => Promise<boolean>,
-    extraHeaders?: Record<string, string>,
+    options: {
+      onAccepted?: () => void;
+      extraHeaders?: Record<string, string>;
+    } = {},
   ): Promise<void> {
-    const response = await this.request('POST', path, body, extraHeaders);
+    const response = await this.request(
+      'POST',
+      path,
+      body,
+      options.extraHeaders,
+    );
     const responseText = await safeText(response);
 
     if (!response.ok) {
@@ -115,6 +138,15 @@ export class UsCommandClient {
       );
     }
     this.log.debug(`${label} accepted, response ${response.status}`, responseText);
+
+    // Tell HomeKit the command went through as soon as Hyundai accepts it.
+    // HomeKit gives a characteristic handler roughly ten seconds before it
+    // gives up and shows "No Response", but the vehicle routinely takes far
+    // longer than that to actually carry a command out - so holding the
+    // callback until confirmation guaranteed "No Response" no matter what
+    // the car did. Confirmation continues in the background and corrects the
+    // reported state once the vehicle really reports in.
+    options.onAccepted?.();
 
     await this.pollUntilConfirmed(label, isConfirmed);
   }

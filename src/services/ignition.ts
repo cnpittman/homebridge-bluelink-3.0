@@ -1,4 +1,4 @@
-import { HyundaiService } from './base';
+import { HyundaiService, once } from './base';
 import { VehicleStatus } from 'bluelinky/dist/interfaces/common.interfaces';
 
 export class Ignition extends HyundaiService {
@@ -24,39 +24,58 @@ export class Ignition extends HyundaiService {
   }
   start(cb): void {
     this.log.info('Starting Vehicle');
-    const command = this.usCommandClient
-      ? this.usCommandClient.start(this.config.remoteStart)
-      : this.vehicle
-          .start(this.config.remoteStart)
-          .then(response => this.log.info('Start Response', response));
+    const respond = once(cb);
 
-    command
-      .then(() => {
-        // usCommandClient already forced one refresh while polling for
-        // confirmation - forcing another here would just spend more of
-        // Hyundai's daily remote-command quota for no benefit.
-        this.va.fetchStatus(!this.usCommandClient);
-        cb(null);
+    if (this.usCommandClient) {
+      this.usCommandClient
+        .start(this.config.remoteStart, () => respond(null))
+        // usCommandClient already forced one refresh while confirming, so
+        // read Hyundai's cache here rather than waking the car again.
+        .then(() => this.va.fetchStatus(false))
+        .catch(reason => {
+          this.log.error('Start Fail', reason);
+          respond(reason);
+        });
+      return;
+    }
+
+    this.vehicle
+      .start(this.config.remoteStart)
+      .then(response => {
+        this.log.info('Start Response', response);
+        this.va.fetchStatus(true);
+        respond(null);
       })
       .catch(reason => {
         this.log.error('Start Fail', reason);
-        cb(reason);
+        respond(reason);
       });
   }
   stop(cb): void {
     this.log.info('Stopping Vehicle');
-    const command = this.usCommandClient
-      ? this.usCommandClient.stop()
-      : this.vehicle.stop().then(response => this.log.info('Stop Response', response));
+    const respond = once(cb);
 
-    command
-      .then(() => {
-        this.va.fetchStatus(!this.usCommandClient);
-        cb(null);
+    if (this.usCommandClient) {
+      this.usCommandClient
+        .stop(() => respond(null))
+        .then(() => this.va.fetchStatus(false))
+        .catch(reason => {
+          this.log.error('Stop Fail', reason);
+          respond(reason);
+        });
+      return;
+    }
+
+    this.vehicle
+      .stop()
+      .then(response => {
+        this.log.info('Stop Response', response);
+        this.va.fetchStatus(true);
+        respond(null);
       })
       .catch(reason => {
         this.log.error('Stop Fail', reason);
-        cb(reason);
+        respond(reason);
       });
   }
 
