@@ -96,7 +96,14 @@ export class UsCommandClient {
 
       const response = await fetch(url, { method: 'GET', headers });
       const text = await safeText(response);
-      this.log.debug(`Enrollment details HTTP ${response.status}`, text);
+      // Deliberately not logging the body. This response carries the account
+      // holder's address, phone number and billing account, plus the same
+      // details for every other driver on the account - none of which belongs
+      // in a log that gets pasted into bug reports. Log only the outcome.
+      this.log.debug(
+        `Enrollment details HTTP ${response.status}` +
+          (response.ok ? '' : ` ${text}`),
+      );
       const entries = JSON.parse(text)?.enrolledVehicleDetails ?? [];
 
       for (const entry of entries) {
