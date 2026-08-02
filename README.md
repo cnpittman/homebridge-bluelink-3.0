@@ -5,7 +5,17 @@
 
 This is a [Homebridge](https://homebridge.io) platform plugin that uses [bluelinky](https://github.com/Hacksore/bluelinky) to connect your Hyundai or Kia vehicle to HomeKit, letting you control your vehicle using Siri, shortcuts, or the Home app.
 
-This is a maintained fork of [athal7/homebridge-hyundai-bluelink](https://github.com/athal7/homebridge-hyundai-bluelink), published as `homebridge-bluelink-3-0`. It adds a more reliable lock/unlock/start/stop path for US-region vehicles - see [US Region Command Reliability](#us-region-command-reliability) below.
+This is a maintained fork of [athal7/homebridge-hyundai-bluelink](https://github.com/athal7/homebridge-hyundai-bluelink), published as `homebridge-bluelink-3-0`.
+
+## ⚠️ Work In Progress
+
+**Remote commands do not currently work on newer US vehicles.** Reading status (lock state, ignition, range, battery) works reliably. Sending lock, unlock, start, or stop does not: Hyundai's API accepts the request and returns `200`, but the vehicle never carries it out. This has been confirmed on a 2026 Sonata Hybrid, where the same commands work normally from the official Bluelink app.
+
+The cause appears to be that the `/ac/v2/` endpoints bluelinky uses are no longer sufficient for newer vehicles - not a bug in this plugin's request handling, which now matches bluelinky's exactly. Investigation is ongoing; see [US Region Command Reliability](#us-region-command-reliability) for what has been ruled out so far.
+
+If you install this, expect a working set of read-only sensors and unreliable controls.
+
+This fork is being developed with the help of [Claude Code](https://claude.com/claude-code).
 
 ## Installation
 
@@ -55,6 +65,19 @@ This plugin can be installed from the Homebridge web console:
 ## US Region Command Reliability
 
 For `region: "US"`, bluelinky's lock/unlock/start/stop calls only confirm that Hyundai's backend accepted the request into its queue, not that the vehicle actually executed it. On newer vehicles this can leave a command stuck "pending" while HomeKit shows it as successful.
+
+### What has been ruled out
+
+On a 2026 Sonata Hybrid, with the request confirmed byte-for-byte equivalent to what bluelinky sends, `POST /ac/v2/rcs/rdo/on` returns `200` and the vehicle does not unlock. The following were investigated and are **not** the cause:
+
+* **Request encoding.** Lock and unlock need a form-encoded body rather than JSON; sending JSON returns `200` and silently does nothing. This is now form-encoded, matching bluelinky, and the behaviour is unchanged.
+* **Rate limiting.** A quota would not let the official app keep working normally minutes later, which it does.
+* **Confirmation timing.** The command is not merely slow - the vehicle never carries it out, confirmed against the official app's own status.
+* **Plugin-side interference.** Aggressive status polling was making things worse and has been removed, but removing it did not make commands work.
+
+The remaining likely explanation is that newer vehicles require something the `/ac/v2/` endpoints no longer provide on their own - a newer endpoint, an additional signed header, or a separate control-token step that the official app performs.
+
+### What the plugin does
 
 For US vehicles, this fork routes those four commands through its own client instead, which:
 * sends the request in the exact form Hyundai's API expects (bluelinky's own lock/unlock calls use a form-encoded body, not JSON - sending JSON gets a `200` response but silently does nothing)
