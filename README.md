@@ -9,11 +9,11 @@ This is a maintained fork of [athal7/homebridge-hyundai-bluelink](https://github
 
 ## ⚠️ Work In Progress
 
-**Remote commands do not currently work on newer US vehicles.** Reading status (lock state, ignition, range, battery) works reliably. Sending lock, unlock, start, or stop does not: Hyundai's API accepts the request and returns `200`, but the vehicle never carries it out. This has been confirmed on a 2026 Sonata Hybrid, where the same commands work normally from the official Bluelink app.
+**US remote commands are under active repair and unverified.** Reading status (lock state, ignition, range, battery) has always worked reliably. Sending lock, unlock, start, or stop did not: Hyundai's API accepted the request and returned `200`, but the vehicle never carried it out - confirmed on a 2026 Sonata Hybrid, where the same commands worked normally from the official Bluelink app.
 
-The cause appears to be that the `/ac/v2/` endpoints bluelinky uses are no longer sufficient for newer vehicles - not a bug in this plugin's request handling, which now matches bluelinky's exactly. Investigation is ongoing; see [US Region Command Reliability](#us-region-command-reliability) for what has been ruled out so far.
+As of 2.1.0 the cause looks identified. bluelinky sends the access token and PIN as `access_token` and `bluelinkservicepin` and omits `clientSecret` entirely, while Hyundai's own client sends `accessToken`, `blueLinkServicePin` and `clientSecret`, with a JSON body rather than a form-encoded one. A PIN header the backend does not recognise matches the observed behaviour exactly: the request authenticates and queues, but the command is never authorised, so the vehicle ignores it. The command path now mirrors the actively maintained Python implementation ([HyundaiBlueLinkApiUSA.py](https://github.com/Hyundai-Kia-Connect/hyundai_kia_connect_api/blob/master/hyundai_kia_connect_api/HyundaiBlueLinkApiUSA.py)) instead of bluelinky.
 
-If you install this, expect a working set of read-only sensors and unreliable controls.
+This has not yet been confirmed working on a vehicle. See [US Region Command Reliability](#us-region-command-reliability) for what was ruled out along the way.
 
 This fork is being developed with the help of [Claude Code](https://claude.com/claude-code).
 
@@ -70,17 +70,17 @@ For `region: "US"`, bluelinky's lock/unlock/start/stop calls only confirm that H
 
 On a 2026 Sonata Hybrid, with the request confirmed byte-for-byte equivalent to what bluelinky sends, `POST /ac/v2/rcs/rdo/on` returns `200` and the vehicle does not unlock. The following were investigated and are **not** the cause:
 
-* **Request encoding.** Lock and unlock need a form-encoded body rather than JSON; sending JSON returns `200` and silently does nothing. This is now form-encoded, matching bluelinky, and the behaviour is unchanged.
+* **Request encoding.** Both a form-encoded body (matching bluelinky) and a JSON one return `200` and change nothing on their own.
 * **Rate limiting.** A quota would not let the official app keep working normally minutes later, which it does.
 * **Confirmation timing.** The command is not merely slow - the vehicle never carries it out, confirmed against the official app's own status.
 * **Plugin-side interference.** Aggressive status polling was making things worse and has been removed, but removing it did not make commands work.
 
-The remaining likely explanation is that newer vehicles require something the `/ac/v2/` endpoints no longer provide on their own - a newer endpoint, an additional signed header, or a separate control-token step that the official app performs.
+What this left was the request's headers, and comparing against the maintained Python implementation showed bluelinky's differ substantially - most importantly `access_token` vs `accessToken`, `bluelinkservicepin` vs `blueLinkServicePin`, and a missing `clientSecret`. The endpoint itself (`/ac/v2/rcs/rdo/on`) is the same one that implementation uses successfully, so the endpoint was never the problem.
 
 ### What the plugin does
 
 For US vehicles, this fork routes those four commands through its own client instead, which:
-* sends the request in the exact form Hyundai's API expects (bluelinky's own lock/unlock calls use a form-encoded body, not JSON - sending JSON gets a `200` response but silently does nothing)
+* sends the headers and JSON body Hyundai's own client uses (`accessToken`, `blueLinkServicePin`, `clientSecret`) rather than bluelinky's, which the backend appears not to accept as authorisation for a command
 * polls the vehicle's real status afterward and waits for the door lock / ignition state to actually change before reporting success back to HomeKit
 * reports success back to HomeKit as soon as Hyundai accepts the command - HomeKit only waits about ten seconds before showing "No Response", while the vehicle routinely takes longer than that to act, so waiting for confirmation before answering guaranteed a "No Response" no matter what the car did
 * verifies the result once afterwards, after the command has had time to clear Hyundai's queue, and updates the state HomeKit shows from that reading

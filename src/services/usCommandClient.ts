@@ -1,19 +1,34 @@
 import { Logger } from 'homebridge';
 import AmericanVehicle from 'bluelinky/dist/vehicles/american.vehicle';
-import { RequestHeaders } from 'bluelinky/dist/interfaces/american.interfaces';
 import { VehicleStartOptions } from 'bluelinky/dist/interfaces/common.interfaces';
 
 // Hyundai's US backend accepts a lock/unlock/start/stop request and returns
-// 200 immediately, but that only means the command was queued - not that the
+// 200 immediately, but that only means the request was queued - not that the
 // vehicle executed it. bluelinky's US vehicle methods treat that 200 as final
-// success, which on newer vehicles leaves the command stuck "pending" on
-// Hyundai's side. This client fires the same requests bluelinky does (lock/
-// unlock as a form-encoded body, exactly as bluelinky's american.vehicle
-// does - Hyundai's API silently no-ops those two if sent as JSON) and then
-// checks the same rcs/rvs/vehicleStatus endpoint bluelinky's own status()
-// call uses, so the state HomeKit shows comes from the vehicle rather than
-// from the fact that a request was accepted.
+// success, and on newer vehicles the command is then never carried out at
+// all: confirmed on a 2026 Sonata Hybrid, where a request byte-for-byte
+// equivalent to bluelinky's returns 200 and the doors never move, while the
+// official app works normally.
 //
+// The difference turned out to be the headers. bluelinky sends the token and
+// PIN as 'access_token' and 'bluelinkservicepin' and omits clientSecret
+// entirely, while Hyundai's own web client - and the actively maintained
+// Python implementation that tracks it, HyundaiBlueLinkApiUSA.py in
+// Hyundai-Kia-Connect/hyundai_kia_connect_api - sends 'accessToken',
+// 'blueLinkServicePin' and 'clientSecret', with a JSON body rather than a
+// form-encoded one. A PIN the backend does not recognise is consistent with
+// what we saw: the request authenticates and queues, but the command itself
+// is never authorised, so the vehicle ignores it.
+//
+// So this client mirrors that Python implementation rather than bluelinky
+// for the four commands. Status reads still go through bluelinky, which
+// works fine.
+const CLIENT_ID = 'm66129Bb-em93-SPAHYN-bZ91-am4540zp19920';
+const CLIENT_SECRET = 'v558o935-6nne-423i-baa8';
+const USER_AGENT =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
+  '(KHTML, like Gecko) Chrome/75.0.3770.142 Safari/537.36';
+
 // Confirmation cannot be done by polling. Hyundai's backend tracks a single
 // outstanding remote request per vehicle - while a command is queued, any
 // other remote request is refused (the official app surfaces this as
@@ -26,8 +41,6 @@ import { VehicleStartOptions } from 'bluelinky/dist/interfaces/common.interfaces
 // So: send the command, let HomeKit go, and ask the vehicle for a genuinely
 // fresh status once the command has had time to clear the queue.
 const CONFIRM_DELAY_MS = 90000;
-
-type RequestBody = { json: Record<string, unknown> } | { form: string };
 
 interface RawVehicleStatus {
   doorLock?: boolean;
@@ -46,9 +59,9 @@ export class UsCommandClient {
     return this.executeAndConfirm(
       'Lock',
       'rcs/rdo/off',
-      this.vinForm(),
+      this.vinBody(),
       refresh => this.doorLockIs(true, refresh),
-      { onAccepted },
+      { onAccepted, appCloudVin: true },
     );
   }
 
@@ -56,9 +69,9 @@ export class UsCommandClient {
     return this.executeAndConfirm(
       'Unlock',
       'rcs/rdo/on',
-      this.vinForm(),
+      this.vinBody(),
       refresh => this.doorLockIs(false, refresh),
-      { onAccepted },
+      { onAccepted, appCloudVin: true },
     );
   }
 
@@ -73,24 +86,32 @@ export class UsCommandClient {
       heating1: false,
       ...options,
     };
+    // Config may leave this out even though bluelinky types it as required.
+    const igniOnDuration = merged.igniOnDuration ?? 5;
     const body = {
       Ims: 0,
       airCtrl: +merged.airCtrl,
-      airTemp: { unit: 1, value: `${merged.airTempvalue}` },
+      airTemp: { unit: 1, value: merged.airTempvalue },
       defrost: merged.defrost,
       heating1: +merged.heating1,
-      igniOnDuration: merged.igniOnDuration,
-      seatHeaterVentInfo: null,
+      igniOnDuration,
+      // Sent as an object rather than bluelinky's null - this mirrors the
+      // shape the working Python implementation sends.
+      seatHeaterVentInfo: {
+        drvSeatHeatState: 0,
+        astSeatHeatState: 0,
+        rlSeatHeatState: 0,
+        rrSeatHeatState: 0,
+      },
       username: this.vehicle.userConfig.username,
       vin: this.vehicle.vehicleConfig.vin,
     };
     return this.executeAndConfirm(
       'Start',
       'rcs/rsc/start',
-      { json: body },
+      body,
       refresh => this.engineIs(true, refresh),
-      // bluelinky overrides the UTC offset header specifically for start.
-      { onAccepted, extraHeaders: { offset: '-4' } },
+      { onAccepted },
     );
   }
 
@@ -104,29 +125,30 @@ export class UsCommandClient {
     );
   }
 
-  private vinForm(): RequestBody {
-    const params = new URLSearchParams();
-    params.append('userName', this.vehicle.userConfig.username ?? '');
-    params.append('vin', this.vehicle.vehicleConfig.vin);
-    return { form: params.toString() };
+  private vinBody(): Record<string, unknown> {
+    return {
+      userName: this.vehicle.userConfig.username,
+      vin: this.vehicle.vehicleConfig.vin,
+    };
   }
 
   private async executeAndConfirm(
     label: string,
     path: string,
-    body: RequestBody | undefined,
+    body: Record<string, unknown> | undefined,
     isConfirmed: (refresh: boolean) => Promise<boolean>,
     options: {
       onAccepted?: () => void;
+      appCloudVin?: boolean;
       extraHeaders?: Record<string, string>;
     } = {},
   ): Promise<void> {
-    const response = await this.request(
-      'POST',
-      path,
-      body,
-      options.extraHeaders,
-    );
+    const extraHeaders = { ...options.extraHeaders };
+    if (options.appCloudVin) {
+      extraHeaders['APPCLOUD-VIN'] = this.vehicle.vehicleConfig.vin;
+    }
+
+    const response = await this.request('POST', path, body, extraHeaders);
     const responseText = await safeText(response);
 
     if (!response.ok) {
@@ -179,15 +201,20 @@ export class UsCommandClient {
     return status !== undefined && !!status.engine === on;
   }
 
-  private async fetchVehicleStatus(refresh: boolean): Promise<RawVehicleStatus | undefined> {
-    const response = await this.request('GET', 'rcs/rvs/vehicleStatus', undefined, {
-      REFRESH: refresh ? 'true' : 'false',
-    });
+  private async fetchVehicleStatus(
+    refresh: boolean,
+  ): Promise<RawVehicleStatus | undefined> {
+    const response = await this.request(
+      'GET',
+      'rcs/rvs/vehicleStatus',
+      undefined,
+      { REFRESH: refresh ? 'true' : 'false' },
+    );
     const text = await safeText(response);
     try {
       return JSON.parse(text)?.vehicleStatus;
     } catch {
-      this.log.warn('Failed to parse vehicle status response while polling', text);
+      this.log.warn('Failed to parse vehicle status response', text);
       return undefined;
     }
   }
@@ -195,76 +222,71 @@ export class UsCommandClient {
   private async request(
     method: 'GET' | 'POST',
     path: string,
-    body: RequestBody | undefined,
+    body: Record<string, unknown> | undefined,
     extraHeaders?: Record<string, string>,
   ): Promise<Response> {
     await this.vehicle.controller.refreshAccessToken();
 
-    const headers: Record<string, string> = {
-      ...toStringHeaders(this.getHeaders()),
-      ...extraHeaders,
-    };
-
-    let requestBody: string | undefined;
-    if (body && 'json' in body) {
-      headers['Content-Type'] = 'application/json';
-      requestBody = JSON.stringify(body.json);
-    } else if (body && 'form' in body) {
-      // Matches bluelinky's own lock/unlock encoding - Hyundai's API expects
-      // this as application/x-www-form-urlencoded, not JSON.
-      requestBody = body.form;
-    }
-
+    const headers = { ...this.getHeaders(), ...extraHeaders };
     const url = `${this.vehicle.controller.environment.baseUrl}/ac/v2/${path}`;
     this.log.debug(
       `${method} ${url}`,
       JSON.stringify(redactHeaders(headers)),
-      requestBody ?? '',
+      body ? JSON.stringify(body) : '',
     );
 
     return fetch(url, {
       method,
       headers,
-      body: requestBody,
+      body: body ? JSON.stringify(body) : undefined,
     });
   }
 
-  private getHeaders(): RequestHeaders {
+  private getHeaders(): Record<string, string> {
     const { controller, vehicleConfig, userConfig } = this.vehicle;
+    const origin = `https://${controller.environment.host}`;
+
+    // Deliberately no 'Host' header: undici sets it from the URL and
+    // rejects attempts to override it. Everything else mirrors the header
+    // set the working Python implementation sends.
     return {
-      'access_token': controller.session.accessToken,
-      'client_id': controller.environment.clientId,
-      'Host': controller.environment.host,
-      'User-Agent': 'okhttp/3.12.0',
+      'content-type': 'application/json;charset=UTF-8',
+      'accept': 'application/json, text/plain, */*',
+      'accept-language': 'en-US,en;q=0.9',
+      'user-agent': USER_AGENT,
+      'origin': origin,
+      'referer': `${origin}/login`,
+      'from': 'SPA',
+      'to': 'ISS',
+      'language': '0',
+      'offset': `${localUtcOffsetHours()}`,
+      'sec-fetch-dest': 'empty',
+      'sec-fetch-mode': 'cors',
+      'sec-fetch-site': 'same-origin',
+      'refresh': 'false',
+      'encryptFlag': 'false',
+      'brandIndicator': vehicleConfig.brandIndicator,
+      'client_id': CLIENT_ID,
+      'clientSecret': CLIENT_SECRET,
+      'username': userConfig.username ?? '',
+      'accessToken': controller.session.accessToken ?? '',
+      'blueLinkServicePin': userConfig.pin ?? '',
       'registrationId': vehicleConfig.regId,
       'gen': vehicleConfig.generation,
-      'username': userConfig.username,
       'vin': vehicleConfig.vin,
-      'APPCLOUD-VIN': vehicleConfig.vin,
-      'Language': '0',
-      'to': 'ISS',
-      'encryptFlag': 'false',
-      'from': 'SPA',
-      'brandIndicator': vehicleConfig.brandIndicator,
-      'bluelinkservicepin': userConfig.pin,
-      'offset': '-5',
     };
   }
 }
 
-function toStringHeaders(headers: RequestHeaders): Record<string, string> {
-  const result: Record<string, string> = {};
-  for (const [key, value] of Object.entries(headers)) {
-    if (value !== undefined) {
-      result[key] = value;
-    }
-  }
-  return result;
+// Hyundai expects the caller's UTC offset in whole hours. bluelinky hardcodes
+// -5, which is wrong for half the year and for anyone outside US Eastern.
+function localUtcOffsetHours(): number {
+  return -Math.round(new Date().getTimezoneOffset() / 60);
 }
 
 function redactHeaders(headers: Record<string, string>): Record<string, string> {
   const redacted = { ...headers };
-  for (const key of ['access_token', 'bluelinkservicepin']) {
+  for (const key of ['accessToken', 'blueLinkServicePin', 'clientSecret']) {
     if (redacted[key]) {
       redacted[key] = '***redacted***';
     }
