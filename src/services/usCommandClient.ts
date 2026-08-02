@@ -80,14 +80,21 @@ export class UsCommandClient {
 
     const fallback = this.vehicle.vehicleConfig.generation;
     try {
+      // Account-level endpoint: it takes only the authenticated headers, not
+      // the per-vehicle ones, and the username goes in the path unencoded.
+      // '@' is legal in a path segment, and percent-encoding it makes Hyundai
+      // look up a user literally named "name%40example.com" and answer
+      // "NO DATA FOUND TO PERFORM THIS OPERATION".
       const username = this.vehicle.userConfig.username ?? '';
-      const response = await this.request(
-        'GET',
-        `enrollment/details/${encodeURIComponent(username)}`,
-        undefined,
-        undefined,
-        fallback,
-      );
+      await this.vehicle.controller.refreshAccessToken();
+
+      const url =
+        `${this.vehicle.controller.environment.baseUrl}` +
+        `/ac/v2/enrollment/details/${username}`;
+      const headers = this.getAccountHeaders();
+      this.log.debug(`GET ${url}`, JSON.stringify(redactHeaders(headers)));
+
+      const response = await fetch(url, { method: 'GET', headers });
       const text = await safeText(response);
       this.log.debug(`Enrollment details HTTP ${response.status}`, text);
       const entries = JSON.parse(text)?.enrolledVehicleDetails ?? [];
@@ -396,6 +403,16 @@ export class UsCommandClient {
   }
 
   private getHeaders(generation: string): Record<string, string> {
+    const { vehicleConfig } = this.vehicle;
+    return {
+      ...this.getAccountHeaders(),
+      'registrationId': vehicleConfig.regId,
+      'gen': generation,
+      'vin': vehicleConfig.vin,
+    };
+  }
+
+  private getAccountHeaders(): Record<string, string> {
     const { controller, vehicleConfig, userConfig } = this.vehicle;
     const origin = `https://${controller.environment.host}`;
 
@@ -427,9 +444,6 @@ export class UsCommandClient {
       'username': userConfig.username ?? '',
       'accessToken': controller.session.accessToken ?? '',
       'blueLinkServicePin': userConfig.pin ?? '',
-      'registrationId': vehicleConfig.regId,
-      'gen': generation,
-      'vin': vehicleConfig.vin,
     };
   }
 }
