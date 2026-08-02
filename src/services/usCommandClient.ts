@@ -42,6 +42,11 @@ const USER_AGENT =
 // fresh status once the command has had time to clear the queue.
 const CONFIRM_DELAY_MS = 90000;
 
+// Following a transaction is a backend query, not a vehicle wake, so it can
+// be polled at a normal rate without competing with the command itself.
+const TRANSACTION_POLL_MS = 5000;
+const TRANSACTION_TIMEOUT_MS = 120000;
+
 interface RawVehicleStatus {
   doorLock?: boolean;
   engine?: boolean;
@@ -162,7 +167,11 @@ export class UsCommandClient {
         `${label} request rejected with status ${response.status}`,
       );
     }
-    this.log.debug(`${label} accepted, response ${response.status}`, responseText);
+    this.log.debug(
+      `${label} accepted, response ${response.status}`,
+      responseText,
+      JSON.stringify(Object.fromEntries(response.headers.entries())),
+    );
 
     // Tell HomeKit the command went through as soon as Hyundai accepts it.
     // HomeKit gives a characteristic handler roughly ten seconds before it
@@ -173,7 +182,81 @@ export class UsCommandClient {
     // reported state once the vehicle really reports in.
     options.onAccepted?.();
 
+    // Hyundai returns a transaction id for the queued command and will report
+    // what became of it, which is the only direct answer to "did the vehicle
+    // actually do this". Fall back to reading vehicle state if the response
+    // carried no transaction id.
+    const transactionId = extractTransactionId(response);
+    if (transactionId) {
+      this.log.debug(`${label} transaction id: ${transactionId}`);
+      await this.followTransaction(label, transactionId);
+      return;
+    }
+
+    this.log.warn(
+      `${label} response carried no transaction id, so Hyundai cannot be ` +
+        'asked what became of it - falling back to reading vehicle state',
+    );
     await this.verifyAfterSettling(label, isConfirmed);
+  }
+
+  // Asks Hyundai what happened to a queued command. This is the same
+  // rmt/getRunningStatus endpoint the maintained Python implementation polls;
+  // bluelinky has no equivalent. Unlike a forced status refresh, it queries
+  // the backend about the transaction rather than waking the vehicle, so it
+  // is not refused while the command is still pending.
+  private async followTransaction(
+    label: string,
+    transactionId: string,
+  ): Promise<void> {
+    const deadline = Date.now() + TRANSACTION_TIMEOUT_MS;
+    let attempt = 0;
+
+    while (Date.now() < deadline) {
+      attempt += 1;
+      await sleep(TRANSACTION_POLL_MS);
+
+      const response = await this.request(
+        'GET',
+        'rmt/getRunningStatus',
+        undefined,
+        {
+          tid: transactionId,
+          login_id: this.vehicle.userConfig.username ?? '',
+          service_type: 'REMOTE_POLL',
+          REFRESH: 'false',
+        },
+      );
+      const text = await safeText(response);
+      this.log.debug(
+        `${label} transaction check ${attempt}: HTTP ${response.status}`,
+        text,
+      );
+
+      let status: string | undefined;
+      try {
+        status = JSON.parse(text)?.status;
+      } catch {
+        // Body was not JSON - already logged above, keep waiting.
+      }
+
+      if (status === 'SUCCESS') {
+        this.log.info(`${label} confirmed complete by vehicle`);
+        return;
+      }
+      if (status === 'ERROR') {
+        this.log.error(
+          `${label} was rejected by the vehicle or the backend`,
+          text,
+        );
+        return;
+      }
+    }
+
+    this.log.warn(
+      `${label} still pending after ${Math.round(TRANSACTION_TIMEOUT_MS / 1000)}s ` +
+        '- the vehicle has not acknowledged it',
+    );
   }
 
   private async verifyAfterSettling(
@@ -287,6 +370,16 @@ export class UsCommandClient {
 // -5, which is wrong for half the year and for anyone outside US Eastern.
 function localUtcOffsetHours(): number {
   return -Math.round(new Date().getTimezoneOffset() / 60);
+}
+
+function extractTransactionId(response: Response): string | undefined {
+  for (const key of ['tmsTid', 'transactionId', 'Xid']) {
+    const value = response.headers.get(key);
+    if (value) {
+      return value;
+    }
+  }
+  return undefined;
 }
 
 function redactHeaders(headers: Record<string, string>): Record<string, string> {
