@@ -32,7 +32,10 @@ export class Ignition extends HyundaiService {
 
     command
       .then(() => {
-        this.va.fetchStatus(true);
+        // usCommandClient already forced one refresh while polling for
+        // confirmation - forcing another here would just spend more of
+        // Hyundai's daily remote-command quota for no benefit.
+        this.va.fetchStatus(!this.usCommandClient);
         cb(null);
       })
       .catch(reason => {
@@ -48,7 +51,7 @@ export class Ignition extends HyundaiService {
 
     command
       .then(() => {
-        this.va.fetchStatus(true);
+        this.va.fetchStatus(!this.usCommandClient);
         cb(null);
       })
       .catch(reason => {

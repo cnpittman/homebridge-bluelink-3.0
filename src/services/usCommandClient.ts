@@ -13,8 +13,18 @@ import { VehicleStartOptions } from 'bluelinky/dist/interfaces/common.interfaces
 // the same rcs/rvs/vehicleStatus endpoint bluelinky's own status() call uses
 // until the door lock / ignition state actually reflects the command, before
 // reporting success back to HomeKit.
+//
+// Hyundai enforces a hard daily quota on remote commands (reportedly ~10
+// lock actions and ~30 remote requests/day total - see
+// https://github.com/Hacksore/bluelinky/issues/80). A REFRESH:true request
+// forces the car to wake up and check in, which counts against that quota
+// just like lock/unlock/start/stop do. So we only force one live refresh per
+// command, then poll Hyundai's cached copy (REFRESH:false, which just reads
+// their server-side cache and doesn't touch the vehicle) - the car reports
+// state changes back on its own once it executes the command.
 const POLL_INTERVAL_MS = 2000;
-const POLL_TIMEOUT_MS = 60000;
+const POLL_TIMEOUT_MS = 30000;
+const MAX_POLL_ATTEMPTS = 10;
 
 type RequestBody = { json: Record<string, unknown> } | { form: string };
 
@@ -32,14 +42,14 @@ export class UsCommandClient {
   ) {}
 
   lock(): Promise<void> {
-    return this.executeAndConfirm('Lock', 'rcs/rdo/off', this.vinForm(), () =>
-      this.doorLockIs(true),
+    return this.executeAndConfirm('Lock', 'rcs/rdo/off', this.vinForm(), refresh =>
+      this.doorLockIs(true, refresh),
     );
   }
 
   unlock(): Promise<void> {
-    return this.executeAndConfirm('Unlock', 'rcs/rdo/on', this.vinForm(), () =>
-      this.doorLockIs(false),
+    return this.executeAndConfirm('Unlock', 'rcs/rdo/on', this.vinForm(), refresh =>
+      this.doorLockIs(false, refresh),
     );
   }
 
@@ -66,15 +76,15 @@ export class UsCommandClient {
       'Start',
       'rcs/rsc/start',
       { json: body },
-      () => this.engineIs(true),
+      refresh => this.engineIs(true, refresh),
       // bluelinky overrides the UTC offset header specifically for start.
       { offset: '-4' },
     );
   }
 
   stop(): Promise<void> {
-    return this.executeAndConfirm('Stop', 'rcs/rsc/stop', undefined, () =>
-      this.engineIs(false),
+    return this.executeAndConfirm('Stop', 'rcs/rsc/stop', undefined, refresh =>
+      this.engineIs(false, refresh),
     );
   }
 
@@ -89,7 +99,7 @@ export class UsCommandClient {
     label: string,
     path: string,
     body: RequestBody | undefined,
-    isConfirmed: () => Promise<boolean>,
+    isConfirmed: (refresh: boolean) => Promise<boolean>,
     extraHeaders?: Record<string, string>,
   ): Promise<void> {
     const response = await this.request('POST', path, body, extraHeaders);
@@ -109,20 +119,35 @@ export class UsCommandClient {
     await this.pollUntilConfirmed(label, isConfirmed);
   }
 
+  // Gives up after MAX_POLL_ATTEMPTS or POLL_TIMEOUT_MS, whichever comes
+  // first, rather than erroring - an unconfirmed command isn't necessarily a
+  // failed one (Hyundai's own app can take minutes), and HomeKit already
+  // shows "No Response" long before either limit is reached anyway, since it
+  // times out waiting for this callback well before we would. Giving up
+  // quietly just stops burning quota on a command whose HomeKit request has
+  // already been abandoned; the next status refresh reports the real state.
   private async pollUntilConfirmed(
     label: string,
-    isConfirmed: () => Promise<boolean>,
+    isConfirmed: (refresh: boolean) => Promise<boolean>,
   ): Promise<void> {
     const deadline = Date.now() + POLL_TIMEOUT_MS;
     let attempt = 0;
+    let hasForcedRefresh = false;
 
-    while (Date.now() < deadline) {
+    while (attempt < MAX_POLL_ATTEMPTS && Date.now() < deadline) {
       attempt += 1;
       await sleep(POLL_INTERVAL_MS);
 
-      const confirmed = await isConfirmed();
+      // Only force the vehicle to wake up and check in once per command -
+      // every poll after that reads Hyundai's cached copy, which the car
+      // updates on its own once it actually executes the command.
+      const refresh = !hasForcedRefresh;
+      const confirmed = await isConfirmed(refresh);
+      hasForcedRefresh = hasForcedRefresh || refresh;
       this.log.debug(
-        `${label} poll attempt ${attempt}: ${confirmed ? 'confirmed' : 'not yet'}`,
+        `${label} poll attempt ${attempt} (refresh=${refresh}): ${
+          confirmed ? 'confirmed' : 'not yet'
+        }`,
       );
 
       if (confirmed) {
@@ -131,27 +156,24 @@ export class UsCommandClient {
       }
     }
 
-    this.log.error(
-      `${label} timed out after ${POLL_TIMEOUT_MS}ms waiting for the vehicle to confirm completion`,
-    );
-    throw new CommandFailedError(
-      `${label} timed out waiting for vehicle confirmation`,
+    this.log.warn(
+      `${label} unconfirmed after ${attempt} attempts - giving up and reporting current state`,
     );
   }
 
-  private async doorLockIs(locked: boolean): Promise<boolean> {
-    const status = await this.fetchVehicleStatus();
+  private async doorLockIs(locked: boolean, refresh: boolean): Promise<boolean> {
+    const status = await this.fetchVehicleStatus(refresh);
     return status?.doorLock === locked;
   }
 
-  private async engineIs(on: boolean): Promise<boolean> {
-    const status = await this.fetchVehicleStatus();
+  private async engineIs(on: boolean, refresh: boolean): Promise<boolean> {
+    const status = await this.fetchVehicleStatus(refresh);
     return status !== undefined && !!status.engine === on;
   }
 
-  private async fetchVehicleStatus(): Promise<RawVehicleStatus | undefined> {
+  private async fetchVehicleStatus(refresh: boolean): Promise<RawVehicleStatus | undefined> {
     const response = await this.request('GET', 'rcs/rvs/vehicleStatus', undefined, {
-      REFRESH: 'true',
+      REFRESH: refresh ? 'true' : 'false',
     });
     const text = await safeText(response);
     try {
