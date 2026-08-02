@@ -59,8 +59,8 @@ For `region: "US"`, bluelinky's lock/unlock/start/stop calls only confirm that H
 For US vehicles, this fork routes those four commands through its own client instead, which:
 * sends the request in the exact form Hyundai's API expects (bluelinky's own lock/unlock calls use a form-encoded body, not JSON - sending JSON gets a `200` response but silently does nothing)
 * polls the vehicle's real status afterward and waits for the door lock / ignition state to actually change before reporting success back to HomeKit
-* reports success back to HomeKit as soon as Hyundai accepts the command, then keeps confirming in the background - HomeKit only waits about ten seconds before showing "No Response", while the vehicle routinely takes longer than that to act, so waiting for confirmation before answering guaranteed a "No Response" no matter what the car did
-* gives up confirming after 10 poll attempts or 30 seconds, whichever comes first, and simply lets the next status refresh report the vehicle's real state rather than erroring
+* reports success back to HomeKit as soon as Hyundai accepts the command - HomeKit only waits about ten seconds before showing "No Response", while the vehicle routinely takes longer than that to act, so waiting for confirmation before answering guaranteed a "No Response" no matter what the car did
+* verifies the result once afterwards, after the command has had time to clear Hyundai's queue, and updates the state HomeKit shows from that reading
 
 Other regions (CA/EU) are unaffected and continue to use bluelinky's built-in methods.
 
@@ -88,7 +88,7 @@ Due to Hyundai's [API Rate Limits](https://github.com/Hacksore/bluelinky/wiki/AP
 
 Hyundai's backend only tracks one outstanding remote request per vehicle. While one is queued, further commands are refused - the official Bluelink app reports `Unable to send your request because a previous request is pending. [HT_533]`. A queued command can take a minute or more to clear, especially if the vehicle is asleep.
 
-This matters because forcing a status refresh is itself a remote request, not just a read. Rapidly polling for confirmation with `REFRESH: true` can therefore queue up behind - and block - the very command it is trying to confirm. This plugin forces at most one refresh per command and reads Hyundai's cached status for the rest.
+This matters because forcing a status refresh is itself a remote request, not just a read. A refresh issued while a command is still queued is refused, and the cached, pre-command reading comes back instead - so a command cannot be confirmed by polling for it, because the command being confirmed is what blocks the poll. This plugin therefore waits for the queue to clear before checking the result once, rather than polling.
 
 Hyundai also applies daily rate limits to remote requests (see [bluelinky#80](https://github.com/Hacksore/bluelinky/issues/80) and their [API Rate Limits](https://github.com/Hacksore/bluelinky/wiki/API-Rate-Limits) notes), so it is worth avoiding unnecessary requests regardless.
 

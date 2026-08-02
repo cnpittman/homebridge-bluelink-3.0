@@ -9,22 +9,23 @@ import { VehicleStartOptions } from 'bluelinky/dist/interfaces/common.interfaces
 // success, which on newer vehicles leaves the command stuck "pending" on
 // Hyundai's side. This client fires the same requests bluelinky does (lock/
 // unlock as a form-encoded body, exactly as bluelinky's american.vehicle
-// does - Hyundai's API silently no-ops those two if sent as JSON), then polls
-// the same rcs/rvs/vehicleStatus endpoint bluelinky's own status() call uses
-// until the door lock / ignition state actually reflects the command, before
-// reporting success back to HomeKit.
+// does - Hyundai's API silently no-ops those two if sent as JSON) and then
+// checks the same rcs/rvs/vehicleStatus endpoint bluelinky's own status()
+// call uses, so the state HomeKit shows comes from the vehicle rather than
+// from the fact that a request was accepted.
 //
-// Hyundai enforces a hard daily quota on remote commands (reportedly ~10
-// lock actions and ~30 remote requests/day total - see
-// https://github.com/Hacksore/bluelinky/issues/80). A REFRESH:true request
-// forces the car to wake up and check in, which counts against that quota
-// just like lock/unlock/start/stop do. So we only force one live refresh per
-// command, then poll Hyundai's cached copy (REFRESH:false, which just reads
-// their server-side cache and doesn't touch the vehicle) - the car reports
-// state changes back on its own once it executes the command.
-const POLL_INTERVAL_MS = 2000;
-const POLL_TIMEOUT_MS = 30000;
-const MAX_POLL_ATTEMPTS = 10;
+// Confirmation cannot be done by polling. Hyundai's backend tracks a single
+// outstanding remote request per vehicle - while a command is queued, any
+// other remote request is refused (the official app surfaces this as
+// "a previous request is pending [HT_533]"). A forced status refresh is
+// itself a remote request, so refreshing while the command is in flight just
+// returns the cached, pre-command reading. Polling therefore reports "not
+// confirmed" no matter what the vehicle actually did, and each poll adds
+// load for nothing.
+//
+// So: send the command, let HomeKit go, and ask the vehicle for a genuinely
+// fresh status once the command has had time to clear the queue.
+const CONFIRM_DELAY_MS = 90000;
 
 type RequestBody = { json: Record<string, unknown> } | { form: string };
 
@@ -144,53 +145,28 @@ export class UsCommandClient {
     // gives up and shows "No Response", but the vehicle routinely takes far
     // longer than that to actually carry a command out - so holding the
     // callback until confirmation guaranteed "No Response" no matter what
-    // the car did. Confirmation continues in the background and corrects the
+    // the car did. Verification continues in the background and corrects the
     // reported state once the vehicle really reports in.
     options.onAccepted?.();
 
-    await this.pollUntilConfirmed(label, isConfirmed);
+    await this.verifyAfterSettling(label, isConfirmed);
   }
 
-  // Gives up after MAX_POLL_ATTEMPTS or POLL_TIMEOUT_MS, whichever comes
-  // first, rather than erroring - an unconfirmed command isn't necessarily a
-  // failed one (Hyundai's own app can take minutes), and HomeKit already
-  // shows "No Response" long before either limit is reached anyway, since it
-  // times out waiting for this callback well before we would. Giving up
-  // quietly just stops burning quota on a command whose HomeKit request has
-  // already been abandoned; the next status refresh reports the real state.
-  private async pollUntilConfirmed(
+  private async verifyAfterSettling(
     label: string,
     isConfirmed: (refresh: boolean) => Promise<boolean>,
   ): Promise<void> {
-    const deadline = Date.now() + POLL_TIMEOUT_MS;
-    let attempt = 0;
-    let hasForcedRefresh = false;
+    await sleep(CONFIRM_DELAY_MS);
 
-    while (attempt < MAX_POLL_ATTEMPTS && Date.now() < deadline) {
-      attempt += 1;
-      await sleep(POLL_INTERVAL_MS);
-
-      // Only force the vehicle to wake up and check in once per command -
-      // every poll after that reads Hyundai's cached copy, which the car
-      // updates on its own once it actually executes the command.
-      const refresh = !hasForcedRefresh;
-      const confirmed = await isConfirmed(refresh);
-      hasForcedRefresh = hasForcedRefresh || refresh;
-      this.log.debug(
-        `${label} poll attempt ${attempt} (refresh=${refresh}): ${
-          confirmed ? 'confirmed' : 'not yet'
-        }`,
+    const confirmed = await isConfirmed(true);
+    if (confirmed) {
+      this.log.info(`${label} confirmed complete by vehicle`);
+    } else {
+      this.log.warn(
+        `${label} not reflected in vehicle status - it may still be in ` +
+          'progress, or the vehicle may not have carried it out',
       );
-
-      if (confirmed) {
-        this.log.info(`${label} confirmed complete by vehicle`);
-        return;
-      }
     }
-
-    this.log.warn(
-      `${label} unconfirmed after ${attempt} attempts - giving up and reporting current state`,
-    );
   }
 
   private async doorLockIs(locked: boolean, refresh: boolean): Promise<boolean> {
