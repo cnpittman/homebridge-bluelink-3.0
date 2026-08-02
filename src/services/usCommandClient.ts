@@ -55,10 +55,73 @@ interface RawVehicleStatus {
 export class CommandFailedError extends Error {}
 
 export class UsCommandClient {
+  private generation?: string;
+
   constructor(
     private readonly vehicle: AmericanVehicle,
     private readonly log: Logger,
   ) {}
+
+  // The 'gen' header tells Hyundai which telematics generation to dispatch a
+  // command to. bluelinky does not read the real value - its US controller
+  // derives it as `modelYear > 2016 ? '2' : '1'`, a rule from when gen 2 was
+  // current, so every recent vehicle is announced as gen 2. The backend
+  // accepts the command anyway and queues it against the wrong generation,
+  // where it sits PENDING forever because the vehicle never answers on that
+  // path. Status reads are unaffected, which is why they always worked.
+  //
+  // Hyundai reports the real value as 'vehicleGeneration' in the enrollment
+  // details, so use that and fall back to bluelinky's guess only if it cannot
+  // be read. (bluelinky's Canadian controller does read the real value.)
+  private async getGeneration(): Promise<string> {
+    if (this.generation) {
+      return this.generation;
+    }
+
+    const fallback = this.vehicle.vehicleConfig.generation;
+    try {
+      const username = this.vehicle.userConfig.username ?? '';
+      const response = await this.request(
+        'GET',
+        `enrollment/details/${encodeURIComponent(username)}`,
+        undefined,
+        undefined,
+        fallback,
+      );
+      const text = await safeText(response);
+      const entries = JSON.parse(text)?.enrolledVehicleDetails ?? [];
+
+      for (const entry of entries) {
+        const details = entry?.vehicleDetails;
+        if (details?.vin === this.vehicle.vehicleConfig.vin) {
+          const reported = details?.vehicleGeneration;
+          if (reported) {
+            this.generation = String(reported);
+            if (this.generation !== fallback) {
+              this.log.info(
+                `Vehicle reports telematics generation ${this.generation}, ` +
+                  `not the ${fallback} bluelinky assumes - using ${this.generation} ` +
+                  'for commands',
+              );
+            }
+            return this.generation;
+          }
+        }
+      }
+      this.log.warn(
+        'Enrollment details did not report a generation for this vehicle - ' +
+          `falling back to ${fallback}`,
+      );
+    } catch (error) {
+      this.log.warn(
+        `Could not read telematics generation, falling back to ${fallback}`,
+        error,
+      );
+    }
+
+    this.generation = fallback;
+    return this.generation;
+  }
 
   lock(onAccepted?: () => void): Promise<void> {
     return this.executeAndConfirm(
@@ -309,10 +372,14 @@ export class UsCommandClient {
     path: string,
     body: Record<string, unknown> | undefined,
     extraHeaders?: Record<string, string>,
+    // Set only by the enrollment lookup itself, which cannot wait on the
+    // generation it is in the process of resolving.
+    knownGeneration?: string,
   ): Promise<Response> {
     await this.vehicle.controller.refreshAccessToken();
 
-    const headers = { ...this.getHeaders(), ...extraHeaders };
+    const generation = knownGeneration ?? (await this.getGeneration());
+    const headers = { ...this.getHeaders(generation), ...extraHeaders };
     const url = `${this.vehicle.controller.environment.baseUrl}/ac/v2/${path}`;
     this.log.debug(
       `${method} ${url}`,
@@ -327,7 +394,7 @@ export class UsCommandClient {
     });
   }
 
-  private getHeaders(): Record<string, string> {
+  private getHeaders(generation: string): Record<string, string> {
     const { controller, vehicleConfig, userConfig } = this.vehicle;
     const origin = `https://${controller.environment.host}`;
 
@@ -360,7 +427,7 @@ export class UsCommandClient {
       'accessToken': controller.session.accessToken ?? '',
       'blueLinkServicePin': userConfig.pin ?? '',
       'registrationId': vehicleConfig.regId,
-      'gen': vehicleConfig.generation,
+      'gen': generation,
       'vin': vehicleConfig.vin,
     };
   }
