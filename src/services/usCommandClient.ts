@@ -89,6 +89,7 @@ export class UsCommandClient {
         fallback,
       );
       const text = await safeText(response);
+      this.log.debug(`Enrollment details HTTP ${response.status}`, text);
       const entries = JSON.parse(text)?.enrolledVehicleDetails ?? [];
 
       for (const entry of entries) {

@@ -61,7 +61,11 @@ export class HyundaiPlatform implements DynamicPlatformPlugin {
    * must not be registered again to prevent "duplicate UUID" errors.
    */
   discoverDevices(): void {
-    this.log.debug('Hyundai config:', this.config);
+    // Never log credentials. This used to dump the whole config, which put
+    // the account password and the PIN that authorises remote commands into
+    // homebridge.log in plain text - and into any log a user shares when
+    // asking for help.
+    this.log.debug('Hyundai config:', redactCredentials(this.config));
 
     const client = new BlueLinky(this.config.credentials);
     client.on('ready', async () => {
@@ -152,4 +156,19 @@ export class HyundaiPlatform implements DynamicPlatformPlugin {
       }
     }
   }
+}
+
+function redactCredentials(config: HyundaiConfig): HyundaiConfig {
+  const { credentials } = config;
+  if (!credentials) {
+    return config;
+  }
+  return {
+    ...config,
+    credentials: {
+      ...credentials,
+      password: '***redacted***',
+      pin: '***redacted***',
+    },
+  };
 }
