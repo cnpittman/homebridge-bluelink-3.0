@@ -55,6 +55,13 @@ export class Lock extends HyundaiService {
       );
     }
 
+    // Leave the target alone until the command resolves, otherwise a routine
+    // status poll landing mid-command settles it back to the old state and
+    // the lock appears to snap back before the car has acted.
+    if (this.commandInFlight) {
+      return;
+    }
+
     // Settle the target state onto whatever the vehicle actually reports.
     // HomeKit renders a lock whose target disagrees with its current state as
     // permanently "Locking..."/"Unlocking..." with a spinner, so a command the

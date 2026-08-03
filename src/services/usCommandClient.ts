@@ -56,6 +56,7 @@ export class CommandFailedError extends Error {}
 
 export class UsCommandClient {
   private generation?: string;
+  private generationLookup?: Promise<string>;
 
   constructor(
     private readonly vehicle: AmericanVehicle,
@@ -77,7 +78,17 @@ export class UsCommandClient {
     if (this.generation) {
       return this.generation;
     }
+    // Commands can overlap; without this each one starts its own lookup.
+    if (this.generationLookup) {
+      return this.generationLookup;
+    }
+    this.generationLookup = this.lookupGeneration().finally(() => {
+      this.generationLookup = undefined;
+    });
+    return this.generationLookup;
+  }
 
+  private async lookupGeneration(): Promise<string> {
     const fallback = this.vehicle.vehicleConfig.generation;
     try {
       // Account-level endpoint: it takes only the authenticated headers, not
@@ -134,8 +145,12 @@ export class UsCommandClient {
       );
     }
 
-    this.generation = fallback;
-    return this.generation;
+    // Deliberately not caching the fallback. Caching it would mean one
+    // transient failure - the enrollment endpoint does return the occasional
+    // 502 - pins this to bluelinky's guess for the rest of the process, which
+    // is exactly the state in which every command silently does nothing. Far
+    // better to spend one extra request per command and keep retrying.
+    return fallback;
   }
 
   lock(onAccepted?: () => void): Promise<void> {

@@ -6,7 +6,7 @@ export class Motor extends HyundaiService {
   private currentRange?: number;
   private batteryChargeHV?: number;
   private chargingState: number = 2; //default to NOT_CHARGEABLE
-  private charging: Boolean = false;
+  private charging = false;
   name = 'Motor';
   serviceType = 'Battery';
   lowBatteryThreshold = 25;
@@ -27,8 +27,12 @@ export class Motor extends HyundaiService {
       .on('get', cb => cb(null, this.statusLowBattery));
   }
   setCurrentState(status: VehicleStatus): void {
-    if (status.engine.charging != this.charging) {
-      this.charging = status.engine.charging ?? false;
+    // Normalise before comparing. Vehicles that never report charging send
+    // undefined, which never equals the stored false, so this logged a
+    // "change" on every single poll.
+    const charging = status.engine.charging ?? false;
+    if (charging !== this.charging) {
+      this.charging = charging;
       this.log.info(`new charging state ${this.charging}`);
       this.chargingState = this.charging ? 1 : 0;
     }

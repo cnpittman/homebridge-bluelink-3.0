@@ -115,18 +115,29 @@ export class Ignition extends HyundaiService {
   }
 
   setCurrentState(status: VehicleStatus): void {
-    if (status.engine.ignition !== this.isOn) {
+    const changed = status.engine.ignition !== this.isOn;
+    if (changed) {
       this.isOn = status.engine.ignition;
-
       this.log.info(`Vehicle is ${this.isOn ? 'On' : 'Off'}`);
+    }
+
+    // Leave the switch alone until the command resolves, otherwise a routine
+    // status poll landing mid-command flips it back before the car has acted.
+    if (this.commandInFlight) {
+      return;
+    }
+
+    // Push even when the reading has not changed. A command the vehicle never
+    // carried out leaves HomeKit showing the state that was requested, and
+    // since the reading did not change there would otherwise be nothing to
+    // correct it - the switch stays stuck on.
+    const pending = this._shouldTurnOn;
+    this._shouldTurnOn = undefined;
+    if (changed || (pending !== undefined && pending !== !!this.isOn)) {
       // Coerce: the characteristic rejects undefined, which is what this
       // reads as before the first status arrives.
       this.service?.updateCharacteristic(this.Characteristic.On, !!this.isOn);
     }
-
-    // Settle onto whatever the vehicle actually reports, so a command it
-    // never carried out does not leave the switch showing the wrong state.
-    this._shouldTurnOn = undefined;
   }
   get shouldTurnOn(): boolean | undefined {
     return this._shouldTurnOn;

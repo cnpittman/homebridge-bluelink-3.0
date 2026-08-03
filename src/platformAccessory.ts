@@ -34,6 +34,17 @@ const MIN_FORCE_REFRESH_INTERVAL_MIN = 60;
 const INITIAL_BACKOFF_MS = 1000 * 60;
 const MAX_BACKOFF_MS = 1000 * 60 * 60;
 
+// config.json is hand-editable, so a value here can be a string, or nonsense.
+// Anything not a usable number falls back to the default: NaN would otherwise
+// reach setInterval, which treats it as zero and polls on every tick.
+function minutesFromConfig(value: unknown, fallback: number): number {
+  const minutes = Number(value);
+  if (value === undefined || value === null || !Number.isFinite(minutes)) {
+    return fallback;
+  }
+  return minutes;
+}
+
 export class VehicleAccessory extends EventEmitter {
   private isFetching = false;
   private backoffUntil = 0;
@@ -56,7 +67,7 @@ export class VehicleAccessory extends EventEmitter {
 
     const statusMinutes = Math.max(
       MIN_STATUS_INTERVAL_MIN,
-      config.statusInterval ?? DEFAULT_STATUS_INTERVAL_MIN,
+      minutesFromConfig(config.statusInterval, DEFAULT_STATUS_INTERVAL_MIN),
     );
     this.platform.log.debug(
       `Reading cached status every ${statusMinutes} minutes`,
@@ -66,8 +77,10 @@ export class VehicleAccessory extends EventEmitter {
       statusMinutes * 60 * 1000,
     );
 
-    const forceMinutes =
-      config.forceRefreshInterval ?? DEFAULT_FORCE_REFRESH_INTERVAL_MIN;
+    const forceMinutes = minutesFromConfig(
+      config.forceRefreshInterval,
+      DEFAULT_FORCE_REFRESH_INTERVAL_MIN,
+    );
     let forceTimer: NodeJS.Timeout | undefined;
     if (forceMinutes > 0) {
       const minutes = Math.max(MIN_FORCE_REFRESH_INTERVAL_MIN, forceMinutes);
