@@ -44,6 +44,17 @@ export class Motor extends HyundaiService {
       this.batteryChargeHV = status.engine.batteryChargeHV;
       this.log.info(`new battery charge is ${this.batteryChargeHV}`);
     }
+    // Push every characteristic that can change, not just the low-battery
+    // flag. Level and charging state were only ever recomputed on an explicit
+    // read, so HomeKit kept showing whatever it last happened to fetch.
+    this.service?.updateCharacteristic(
+      this.Characteristic.BatteryLevel,
+      this.rangePct,
+    );
+    this.service?.updateCharacteristic(
+      this.Characteristic.ChargingState,
+      this.chargingState,
+    );
     this.service?.updateCharacteristic(
       this.Characteristic.StatusLowBattery,
       this.statusLowBattery,
@@ -51,6 +62,12 @@ export class Motor extends HyundaiService {
   }
 
   get rangePct(): number {
+    return clampPercent(this.rawRangePct);
+  }
+
+  private get rawRangePct(): number {
+    // Note the truthiness check on batteryChargeHV is deliberate: hybrids
+    // report 0 here and want the range-based estimate instead.
     if (this.batteryChargeHV) {
       return this.batteryChargeHV;
     } else if (!this.maxRange) {
@@ -69,4 +86,14 @@ export class Motor extends HyundaiService {
       return StatusLowBattery.BATTERY_LEVEL_NORMAL;
     }
   }
+}
+
+// BatteryLevel is a whole percentage. A range ratio produces fractions, and
+// range briefly exceeding the learned maximum would push it past 100, both of
+// which the characteristic rejects.
+function clampPercent(value: number): number {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+  return Math.max(0, Math.min(100, Math.round(value)));
 }
