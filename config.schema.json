@@ -24,9 +24,24 @@
             "required": true,
             "placeholder": "US",
             "oneOf": [
-              { "title": "United States", "enum": ["US"] },
-              { "title": "Canada", "enum": ["CA"] },
-              { "title": "Europe", "enum": ["EU"] }
+              {
+                "title": "United States",
+                "enum": [
+                  "US"
+                ]
+              },
+              {
+                "title": "Canada",
+                "enum": [
+                  "CA"
+                ]
+              },
+              {
+                "title": "Europe",
+                "enum": [
+                  "EU"
+                ]
+              }
             ]
           },
           "brand": {
@@ -35,8 +50,18 @@
             "required": true,
             "default": "hyundai",
             "oneOf": [
-              { "title": "Hyundai", "enum": ["hyundai"] },
-              { "title": "Kia", "enum": ["kia"] }
+              {
+                "title": "Hyundai",
+                "enum": [
+                  "hyundai"
+                ]
+              },
+              {
+                "title": "Kia",
+                "enum": [
+                  "kia"
+                ]
+              }
             ]
           },
           "pin": {
@@ -99,6 +124,22 @@
             "default": 15
           }
         }
+      },
+      "statusInterval": {
+        "title": "Status Refresh Interval (minutes)",
+        "type": "number",
+        "required": false,
+        "default": 15,
+        "minimum": 5,
+        "description": "How often to read Hyundai's cached vehicle status. This does not contact the car, so it uses none of its battery. Lower values keep HomeKit closer to the Bluelink app. Minimum 5."
+      },
+      "forceRefreshInterval": {
+        "title": "Forced Live Refresh Interval (minutes)",
+        "type": "number",
+        "required": false,
+        "default": 0,
+        "minimum": 0,
+        "description": "How often to wake the vehicle for a live reading. This DOES use the car's 12V battery and counts against Hyundai's daily limits. 0 disables it (recommended) - the car reports in on its own when anything happens to it. Minimum 60 when enabled."
       }
     }
   }

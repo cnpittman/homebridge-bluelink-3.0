@@ -53,6 +53,19 @@ A [Homebridge](https://homebridge.io) plugin that connects your Hyundai or Kia t
 * `remoteStart.airCtrl` turns on the HVAC; `airTempvalue` is in Fahrenheit
 * `remoteStart.igniOnDuration` must be 1–10, or remote start fails
 
+### Keeping status current
+
+Two optional settings control polling:
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| `statusInterval` | `15` min | Reads Hyundai's **cached** status. Never contacts the car, so it costs no battery. Min 5. |
+| `forceRefreshInterval` | `0` (off) | **Wakes the car** over cellular for a live reading. Uses its 12V battery and counts against Hyundai's daily limits. Min 60 when enabled. |
+
+If HomeKit lags behind the Bluelink app, lower `statusInterval` — not the other one. The car reports to Hyundai on its own whenever something happens to it (fob, doors, ignition), so the fresh data is usually already sitting in the cache waiting to be read. Forced refreshes are rarely worth their cost; leave them off unless you specifically need readings from a car that's been parked untouched for a long time.
+
+Failed requests back off exponentially up to an hour, so an outage doesn't turn into a retry storm.
+
 ## What's Fixed in 2.4.0
 
 Verified on a 2026 Sonata Hybrid with Homebridge v2.
