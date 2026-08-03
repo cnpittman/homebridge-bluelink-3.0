@@ -1,11 +1,13 @@
 import { VehicleStatus } from 'bluelinky/dist/interfaces/common.interfaces';
 import { Vehicle } from 'bluelinky/dist/vehicles/vehicle';
+import AmericanVehicle from 'bluelinky/dist/vehicles/american.vehicle';
 import { EventEmitter } from 'events';
 import { PlatformAccessory } from 'homebridge';
 
 import { HyundaiConfig } from './config';
 import { HyundaiPlatform } from './platform';
 import initServices from './services';
+import { UsCommandClient } from './services/usCommandClient';
 
 // Two very different reads share one endpoint:
 //
@@ -49,6 +51,29 @@ export class VehicleAccessory extends EventEmitter {
   private isFetching = false;
   private backoffUntil = 0;
   private backoffMs = 0;
+  private _usCommandClient?: UsCommandClient;
+
+  // bluelinky's US command methods report success as soon as Hyundai accepts
+  // a request into its queue, and on newer vehicles they never reach the car
+  // at all - see UsCommandClient. For the US region only, commands go through
+  // that instead. One per vehicle, shared by every service, so the telematics
+  // generation is looked up and cached once.
+  get usCommandClient(): UsCommandClient | undefined {
+    // bluelinky's Vehicle.region is typed as its REGIONS enum, but the enum's
+    // values are just the region code strings ('US' | 'CA' | 'EU') - comparing
+    // against the literal avoids a runtime require() into bluelinky's
+    // internals for something that is only ever used as a type elsewhere.
+    if ((this.vehicle as AmericanVehicle).region !== 'US') {
+      return undefined;
+    }
+    if (!this._usCommandClient) {
+      this._usCommandClient = new UsCommandClient(
+        this.vehicle as AmericanVehicle,
+        this.platform.log,
+      );
+    }
+    return this._usCommandClient;
+  }
 
   constructor(
     public readonly platform: HyundaiPlatform,

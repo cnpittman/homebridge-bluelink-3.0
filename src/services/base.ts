@@ -1,6 +1,5 @@
 import { VehicleStatus } from 'bluelinky/dist/interfaces/common.interfaces';
 import { Vehicle } from 'bluelinky/dist/vehicles/vehicle';
-import AmericanVehicle from 'bluelinky/dist/vehicles/american.vehicle';
 import { Characteristic, Logger, PlatformAccessory, Service } from 'homebridge';
 import { HyundaiConfig } from '../config';
 import { HyundaiPlatform } from '../platform';
@@ -14,7 +13,6 @@ export abstract class HyundaiService {
   protected readonly Characteristic: typeof Characteristic;
   protected readonly log: Logger;
   protected readonly config: HyundaiConfig;
-  private _usCommandClient?: UsCommandClient;
 
   constructor(protected readonly va: VehicleAccessory) {
     this.accessory = this.va.accessory;
@@ -23,7 +21,18 @@ export abstract class HyundaiService {
     this.Characteristic = this.platform.Characteristic;
     this.log = this.platform.log;
     this.config = <HyundaiConfig>this.platform.config;
-    this.va.on('update', this.setCurrentState.bind(this));
+    // Contain failures to the service that caused them. EventEmitter
+    // propagates a throwing listener synchronously, so without this a single
+    // bad reading would stop the remaining services from seeing the update at
+    // all, and would surface inside the status fetch's own catch - logged as
+    // a fetch failure and backing polling off for up to an hour.
+    this.va.on('update', (status: VehicleStatus) => {
+      try {
+        this.setCurrentState(status);
+      } catch (error) {
+        this.log.error(`Failed to apply status update to ${this.name}`, error);
+      }
+    });
   }
 
   // bluelinky's US command methods (lock/unlock/start/stop) return success as
@@ -32,21 +41,12 @@ export abstract class HyundaiService {
   // the command stuck "pending" instead of taking effect. For the US region
   // only, route commands through UsCommandClient instead, which polls for
   // real completion. Other regions keep using bluelinky's built-in methods.
+  //
+  // Held on the vehicle rather than per service, so the lock and the ignition
+  // share one telematics-generation lookup instead of each performing (and
+  // caching) their own.
   protected get usCommandClient(): UsCommandClient | undefined {
-    // bluelinky's Vehicle.region is typed as its REGIONS enum, but the enum's
-    // values are just the region code strings ('US' | 'CA' | 'EU') - comparing
-    // against the literal avoids a runtime require() into bluelinky's
-    // internals for something that's only ever used as a type elsewhere.
-    if ((this.vehicle as AmericanVehicle).region !== 'US') {
-      return undefined;
-    }
-    if (!this._usCommandClient) {
-      this._usCommandClient = new UsCommandClient(
-        this.vehicle as AmericanVehicle,
-        this.log,
-      );
-    }
-    return this._usCommandClient;
+    return this.va.usCommandClient;
   }
 
   protected get service(): Service {
