@@ -5,6 +5,7 @@ export class Lock extends HyundaiService {
   private _shouldLock?: boolean;
   private isLocked?: boolean;
   private resetTimer?: NodeJS.Timeout;
+  private commandInFlight = false;
   name = 'Doors';
   serviceType = 'LockMechanism';
 
@@ -18,13 +19,29 @@ export class Lock extends HyundaiService {
     this.service
       ?.getCharacteristic(LockTargetState)
       .on('get', cb => cb(null, this.lockTargetState))
-      .on('set', (_value, cb) => {
-        if ([undefined, this.isLocked].includes(this.shouldLock)) {
-          this.shouldLock = !this.isLocked;
-          this.shouldLock ? this.lock(cb) : this.unlock(cb);
+      .on('set', (value, cb) => {
+        // Do exactly what HomeKit asked for. This used to ignore the
+        // requested value and toggle the current state instead, so asking a
+        // locked car to lock computed the opposite and unlocked it. It went
+        // unnoticed while commands were not reaching vehicles at all.
+        const shouldLock = value === LockTargetState.SECURED;
+
+        // Hyundai only tracks one outstanding remote request per vehicle, so
+        // a second command while one is in flight would just be refused.
+        if (this.commandInFlight) {
+          this.log.info(
+            `Ignoring ${shouldLock ? 'lock' : 'unlock'} - a command is ` +
+              'already in progress for this vehicle',
+          );
+          cb(null);
+          return;
+        }
+
+        this.shouldLock = shouldLock;
+        if (shouldLock) {
+          this.lock(cb);
         } else {
-          this.log.debug('isLocked', this.isLocked);
-          this.log.debug('shouldLock', this.shouldLock);
+          this.unlock(cb);
         }
       });
   }
@@ -58,6 +75,7 @@ export class Lock extends HyundaiService {
   lock(cb): void {
     this.log.info('Locking Vehicle');
     const respond = once(cb);
+    this.commandInFlight = true;
 
     if (this.usCommandClient) {
       this.usCommandClient
@@ -68,6 +86,9 @@ export class Lock extends HyundaiService {
         .catch(reason => {
           this.log.error('Lock Fail', reason);
           respond(reason);
+        })
+        .finally(() => {
+          this.commandInFlight = false;
         });
       return;
     }
@@ -82,11 +103,15 @@ export class Lock extends HyundaiService {
       .catch(reason => {
         this.log.error('Lock Fail', reason);
         respond(reason);
+      })
+      .finally(() => {
+        this.commandInFlight = false;
       });
   }
   unlock(cb): void {
     this.log.info('Unlocking Vehicle');
     const respond = once(cb);
+    this.commandInFlight = true;
 
     if (this.usCommandClient) {
       this.usCommandClient
@@ -95,6 +120,9 @@ export class Lock extends HyundaiService {
         .catch(reason => {
           this.log.error('Unlock Fail', reason);
           respond(reason);
+        })
+        .finally(() => {
+          this.commandInFlight = false;
         });
       return;
     }
@@ -109,6 +137,9 @@ export class Lock extends HyundaiService {
       .catch(reason => {
         this.log.error('Unlock Fail', reason);
         respond(reason);
+      })
+      .finally(() => {
+        this.commandInFlight = false;
       });
   }
   get lockCurrentState(): number {
