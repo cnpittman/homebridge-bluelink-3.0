@@ -26,4 +26,7 @@ export interface HyundaiConfig extends PlatformConfig {
   // Minutes between forced refreshes, which wake the vehicle over cellular.
   // 0 disables them.
   forceRefreshInterval?: number;
+  // Publish estimated range as a humidity sensor, so it appears on its own
+  // tile as a percentage instead of only on the accessory's settings page.
+  showRangeSensor?: boolean;
 }

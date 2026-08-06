@@ -5,7 +5,7 @@
 
 A [Homebridge](https://homebridge.io) plugin that connects your Hyundai or Kia to HomeKit, so you can lock, unlock, and remote start from the Home app or Siri.
 
-**Install:** [homebridge-bluelink-3-0 on npm](https://www.npmjs.com/package/homebridge-bluelink-3-0) · current version **3.0.2**
+**Install:** [homebridge-bluelink-3-0 on npm](https://www.npmjs.com/package/homebridge-bluelink-3-0) · current version **3.0.3**
 
 ## Credits
 
@@ -71,6 +71,20 @@ Two optional settings control polling:
 If HomeKit lags behind the Bluelink app, lower `statusInterval` — not the other one. The car reports to Hyundai on its own whenever something happens to it (fob, doors, ignition), so the fresh data is usually already sitting in the cache waiting to be read. Forced refreshes are rarely worth their cost; leave them off unless you specifically need readings from a car that's been parked untouched for a long time.
 
 Failed requests back off exponentially up to an hour, so an outage doesn't turn into a retry storm.
+
+### Seeing estimated range
+
+Set `maxRange` on the vehicle to its realistic full-tank range and the battery level becomes a fuel gauge — 246 miles against a `maxRange` of 570 reads as 43%. Left unset, the plugin treats the highest range it has ever seen as 100%, which usually means it sits at 100% until you happen to observe a fuller tank.
+
+Battery level only appears on the accessory's settings page, though. For a tile you can actually see, set `showRangeSensor`:
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| `showRangeSensor` | `false` | Publishes range as its own tile, as a percentage of `maxRange`. |
+
+HomeKit has no characteristic for distance, so this cannot show miles. It uses a humidity sensor — the one plain 0–100 percentage the Home app renders on its own tile — so it appears as `Range 43%`. Shortcuts reads it as a number, which makes conditions like `If Range is less than 20` possible.
+
+Turning the setting off again removes the tile on the next restart.
 
 ## Characteristic Values (for Shortcuts)
 

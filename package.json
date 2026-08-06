@@ -2,7 +2,7 @@
   "private": false,
   "displayName": "Homebridge BlueLink 3.0",
   "name": "homebridge-bluelink-3-0",
-  "version": "3.0.2",
+  "version": "3.0.3",
   "description": "Integrates with remote functionality for Hyundai cars.",
   "license": "Apache-2.0",
   "repository": {

@@ -140,6 +140,13 @@
         "default": 0,
         "minimum": 0,
         "description": "How often to wake the vehicle for a live reading. This DOES use the car's 12V battery and counts against Hyundai's daily limits. 0 disables it (recommended) - the car reports in on its own when anything happens to it. Minimum 60 when enabled."
+      },
+      "showRangeSensor": {
+        "title": "Show Range as a Sensor Tile",
+        "type": "boolean",
+        "required": false,
+        "default": false,
+        "description": "Publish estimated range as a percentage of Maximum Range on its own tile. HomeKit has no characteristic for distance, so this uses a humidity sensor - the tile reads as a percentage (e.g. 43%) rather than miles. Without it, range is only visible as the battery level on the accessory's settings page."
       }
     }
   }
