@@ -5,7 +5,7 @@
 
 A [Homebridge](https://homebridge.io) plugin that connects your Hyundai or Kia to HomeKit, so you can lock, unlock, and remote start from the Home app or Siri.
 
-**Install:** [homebridge-bluelink-3-0 on npm](https://www.npmjs.com/package/homebridge-bluelink-3-0) · current version **2.4.0**
+**Install:** [homebridge-bluelink-3-0 on npm](https://www.npmjs.com/package/homebridge-bluelink-3-0) · current version **3.0.1**
 
 ## Credits
 
@@ -13,23 +13,11 @@ A [Homebridge](https://homebridge.io) plugin that connects your Hyundai or Kia t
 * [Hacksore/bluelinky](https://github.com/Hacksore/bluelinky) — the Bluelink/UVO API library this is built on.
 * [Hyundai-Kia-Connect/hyundai_kia_connect_api](https://github.com/Hyundai-Kia-Connect/hyundai_kia_connect_api) — the actively maintained Python implementation. Comparing against its `HyundaiBlueLinkApiUSA.py` is what identified the fixes below.
 
-## Upgrading to 3.0.0
+## Upgrading to 3.0.1
 
-The platform name changed from `Hyundai` to `HyundaiBlueLink3`, because the original plugin also uses `Hyundai` and Homebridge cannot tell two plugins apart when they share one — it will attribute your config to whichever it resolves first, and the two tangle over the same VIN-derived accessory UUID.
+**If you installed 3.0.0, set `"platform"` back to `"Hyundai"` in your config.**
 
-**Edit your `config.json`** (or the Homebridge UI's JSON editor) and change:
-
-```json
-"platform": "Hyundai"
-```
-
-to:
-
-```json
-"platform": "HyundaiBlueLink3"
-```
-
-Nothing else changes. The accessory is recreated under the new platform name, so you may need to remove the stale cached accessory (Homebridge UI → Settings → Remove Single Cached Accessory) and re-add the bridge in the Home app.
+3.0.0 renamed the platform to `HyundaiBlueLink3` to avoid sharing a name with the plugin this was forked from. That was a mistake: the platform name is half the key Homebridge uses to match cached accessories, so renaming it orphaned every cached accessory and the child bridge died on startup. 3.0.1 reverts it. The collision it addressed only matters if both plugins are installed at once.
 
 ## Installation
 
@@ -62,7 +50,7 @@ Nothing else changes. The accessory is recreated under the new platform name, so
             "airTempvalue": 72,
             "igniOnDuration": 10
         },
-        "platform": "HyundaiBlueLink3"
+        "platform": "Hyundai"
     }
 ],
 ```
