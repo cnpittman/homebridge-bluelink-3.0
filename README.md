@@ -13,6 +13,24 @@ A [Homebridge](https://homebridge.io) plugin that connects your Hyundai or Kia t
 * [Hacksore/bluelinky](https://github.com/Hacksore/bluelinky) — the Bluelink/UVO API library this is built on.
 * [Hyundai-Kia-Connect/hyundai_kia_connect_api](https://github.com/Hyundai-Kia-Connect/hyundai_kia_connect_api) — the actively maintained Python implementation. Comparing against its `HyundaiBlueLinkApiUSA.py` is what identified the fixes below.
 
+## Upgrading to 3.0.0
+
+The platform name changed from `Hyundai` to `HyundaiBlueLink3`, because the original plugin also uses `Hyundai` and Homebridge cannot tell two plugins apart when they share one — it will attribute your config to whichever it resolves first, and the two tangle over the same VIN-derived accessory UUID.
+
+**Edit your `config.json`** (or the Homebridge UI's JSON editor) and change:
+
+```json
+"platform": "Hyundai"
+```
+
+to:
+
+```json
+"platform": "HyundaiBlueLink3"
+```
+
+Nothing else changes. The accessory is recreated under the new platform name, so you may need to remove the stale cached accessory (Homebridge UI → Settings → Remove Single Cached Accessory) and re-add the bridge in the Home app.
+
 ## Installation
 
 1. In the [Homebridge](https://homebridge.io) UI, open the **Plugins** tab
@@ -44,7 +62,7 @@ A [Homebridge](https://homebridge.io) plugin that connects your Hyundai or Kia t
             "airTempvalue": 72,
             "igniOnDuration": 10
         },
-        "platform": "Hyundai"
+        "platform": "HyundaiBlueLink3"
     }
 ],
 ```
