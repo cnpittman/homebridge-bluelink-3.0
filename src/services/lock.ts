@@ -12,6 +12,13 @@ export class Lock extends HyundaiService {
   initService(): void {
     const { LockCurrentState, LockTargetState } = this.Characteristic;
 
+    // The vehicle exposes a lock, a battery and a switch. With none of them
+    // marked primary, HomeKit has no way to tell which one represents the
+    // accessory, and treats it generically - which is why an automation
+    // offers a raw value to enter rather than Locked and Unlocked. The doors
+    // are what this accessory fundamentally is.
+    this.service?.setPrimaryService(true);
+
     this.service
       ?.getCharacteristic(LockCurrentState)
       .on('get', cb => cb(null, this.lockCurrentState));
