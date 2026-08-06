@@ -5,7 +5,7 @@
 
 A [Homebridge](https://homebridge.io) plugin that connects your Hyundai or Kia to HomeKit, so you can lock, unlock, and remote start from the Home app or Siri.
 
-**Install:** [homebridge-bluelink-3-0 on npm](https://www.npmjs.com/package/homebridge-bluelink-3-0) · current version **3.0.1**
+**Install:** [homebridge-bluelink-3-0 on npm](https://www.npmjs.com/package/homebridge-bluelink-3-0) · current version **3.0.2**
 
 ## Credits
 
@@ -71,6 +71,57 @@ Two optional settings control polling:
 If HomeKit lags behind the Bluelink app, lower `statusInterval` — not the other one. The car reports to Hyundai on its own whenever something happens to it (fob, doors, ignition), so the fresh data is usually already sitting in the cache waiting to be read. Forced refreshes are rarely worth their cost; leave them off unless you specifically need readings from a car that's been parked untouched for a long time.
 
 Failed requests back off exponentially up to an hour, so an outage doesn't turn into a retry storm.
+
+## Characteristic Values (for Shortcuts)
+
+The Home app shows friendly names, but the **Shortcuts** app exposes raw HomeKit characteristics — so `If Lock Mechanism Current State is …` wants a number, not "Locked". These are the values this plugin sends.
+
+### Doors (lock)
+
+`Lock Mechanism Current State` — what the vehicle reports:
+
+| Value | Meaning |
+| --- | --- |
+| `0` | Unlocked |
+| `1` | Locked |
+| `2` | Jammed (never sent by this plugin) |
+| `3` | Unknown — no status received from the vehicle yet |
+
+`Lock Mechanism Target State` — what you set:
+
+| Value | Action |
+| --- | --- |
+| `0` | Unlock |
+| `1` | Lock |
+
+A `3` means the plugin has not yet had a successful status fetch, so it does not know whether the car is locked. It is not "unlocked" — treat it as no answer, and check the Homebridge log for status errors.
+
+### Motor (battery)
+
+| Characteristic | Value | Meaning |
+| --- | --- | --- |
+| `Battery Level` | `0`–`100` | Percent. Uses the HV battery charge if the vehicle reports one, otherwise range as a percentage of the highest range seen. |
+| `Charging State` | `0` | Not charging |
+| | `1` | Charging |
+| | `2` | Not chargeable — also the value before any status arrives |
+| `Status Low Battery` | `0` | Normal |
+| | `1` | Low (below 25%) |
+
+### Ignition (switch)
+
+`On` is a boolean — `true`/`1` is running, `false`/`0` is off.
+
+### Example: auto-lock if still unlocked
+
+```
+When I receive a notification from MyHyundai containing "unlocked"
+  Wait 180 seconds
+  Get Lock Mechanism Current State
+  If it is 0
+    Set the lock to Locked
+```
+
+Note the state you read comes from the plugin's cached status, refreshed per `statusInterval` (15 minutes by default), so it can lag behind a notification that just arrived. Lower `statusInterval`, or skip the check and lock unconditionally — locking an already-locked car is harmless.
 
 ## What's Fixed in 2.4.0
 
