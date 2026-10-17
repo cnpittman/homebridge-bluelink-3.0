@@ -173,10 +173,7 @@ export class UsCommandClient {
     );
   }
 
-  start(
-    options: VehicleStartOptions,
-    onAccepted?: () => void,
-  ): Promise<void> {
+  start(options: VehicleStartOptions, onAccepted?: () => void): Promise<void> {
     const merged = {
       airCtrl: false,
       airTempvalue: 70,
@@ -347,8 +344,9 @@ export class UsCommandClient {
     }
 
     this.log.warn(
-      `${label} still pending after ${Math.round(TRANSACTION_TIMEOUT_MS / 1000)}s ` +
-        '- the vehicle has not acknowledged it',
+      `${label} still pending after ${Math.round(
+        TRANSACTION_TIMEOUT_MS / 1000,
+      )}s ` + '- the vehicle has not acknowledged it',
     );
   }
 
@@ -369,7 +367,10 @@ export class UsCommandClient {
     }
   }
 
-  private async doorLockIs(locked: boolean, refresh: boolean): Promise<boolean> {
+  private async doorLockIs(
+    locked: boolean,
+    refresh: boolean,
+  ): Promise<boolean> {
     const status = await this.fetchVehicleStatus(refresh);
     return status?.doorLock === locked;
   }
@@ -428,9 +429,9 @@ export class UsCommandClient {
     const { vehicleConfig } = this.vehicle;
     return {
       ...this.getAccountHeaders(),
-      'registrationId': vehicleConfig.regId,
-      'gen': generation,
-      'vin': vehicleConfig.vin,
+      registrationId: vehicleConfig.regId,
+      gen: generation,
+      vin: vehicleConfig.vin,
     };
   }
 
@@ -443,15 +444,15 @@ export class UsCommandClient {
     // set the working Python implementation sends.
     return {
       'content-type': 'application/json;charset=UTF-8',
-      'accept': 'application/json, text/plain, */*',
+      accept: 'application/json, text/plain, */*',
       'accept-language': 'en-US,en;q=0.9',
       'user-agent': USER_AGENT,
-      'origin': origin,
-      'referer': `${origin}/login`,
-      'from': 'SPA',
-      'to': 'ISS',
-      'language': '0',
-      'offset': `${localUtcOffsetHours()}`,
+      origin: origin,
+      referer: `${origin}/login`,
+      from: 'SPA',
+      to: 'ISS',
+      language: '0',
+      offset: `${localUtcOffsetHours()}`,
       'sec-fetch-dest': 'empty',
       'sec-fetch-mode': 'cors',
       'sec-fetch-site': 'same-origin',
@@ -459,13 +460,13 @@ export class UsCommandClient {
       // insensitive, so pairing it with the 'REFRESH' the status call adds
       // makes fetch collapse the two into "false, true" and the refresh is
       // silently lost. Callers set REFRESH explicitly instead.
-      'encryptFlag': 'false',
-      'brandIndicator': vehicleConfig.brandIndicator,
-      'client_id': CLIENT_ID,
-      'clientSecret': CLIENT_SECRET,
-      'username': userConfig.username ?? '',
-      'accessToken': controller.session.accessToken ?? '',
-      'blueLinkServicePin': userConfig.pin ?? '',
+      encryptFlag: 'false',
+      brandIndicator: vehicleConfig.brandIndicator,
+      client_id: CLIENT_ID,
+      clientSecret: CLIENT_SECRET,
+      username: userConfig.username ?? '',
+      accessToken: controller.session.accessToken ?? '',
+      blueLinkServicePin: userConfig.pin ?? '',
     };
   }
 }
@@ -486,7 +487,9 @@ function extractTransactionId(response: Response): string | undefined {
   return undefined;
 }
 
-function redactHeaders(headers: Record<string, string>): Record<string, string> {
+function redactHeaders(
+  headers: Record<string, string>,
+): Record<string, string> {
   const redacted = { ...headers };
   for (const key of ['accessToken', 'blueLinkServicePin', 'clientSecret']) {
     if (redacted[key]) {
