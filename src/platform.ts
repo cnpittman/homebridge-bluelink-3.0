@@ -8,10 +8,15 @@ import {
   Characteristic,
 } from 'homebridge';
 import BlueLinky from 'bluelinky';
+import { Vehicle } from 'bluelinky/dist/vehicles/vehicle';
 
 import { PLATFORM_NAME, PLUGIN_NAME } from './settings';
 import { VehicleAccessory } from './platformAccessory';
 import { HyundaiConfig } from './config';
+
+// Backs off the same way status polling does: a minute, doubling to an hour.
+const INITIAL_LOGIN_RETRY_MS = 1000 * 60;
+const MAX_LOGIN_RETRY_MS = 1000 * 60 * 60;
 
 export class HyundaiPlatform implements DynamicPlatformPlugin {
   public readonly Service: typeof Service;
@@ -83,85 +88,56 @@ export class HyundaiPlatform implements DynamicPlatformPlugin {
     }
 
     const client = new BlueLinky(this.config.credentials);
-    // Errors thrown in here surface as unhandled rejections rather than
-    // reaching the caller's try/catch, since this runs on an event callback.
-    client.on('ready', async () => {
-      try {
-        this.log.debug('Client Ready');
-        for (const { vin, maxRange } of this.config.vehicles) {
-          const uuid = this.api.hap.uuid.generate(vin);
-          const existingAccessory = this.accessories.find(
-            accessory => accessory.UUID === uuid,
-          );
-          this.log.debug('Fetching vehicle:', vin);
-          const vehicle = client.getVehicle(vin);
-          this.log.debug('Vehicle found', vehicle?.vehicleConfig);
 
-          if (existingAccessory) {
-            // the accessory already exists
-            if (vehicle) {
-              this.log.info(
-                'Restoring existing accessory from cache:',
-                existingAccessory.displayName,
-              );
-              // if you need to update the accessory.context then you should run `api.updatePlatformAccessories`. eg.:
-              // existingAccessory.context.device = device;
-              // this.api.updatePlatformAccessories([existingAccessory]);
-              existingAccessory.context.device = vehicle.vehicleConfig;
-              existingAccessory.context.device.maxRange = maxRange;
-              // create the accessory handler for the restored accessory
-              // this is imported from `platformAccessory.ts`
-              new VehicleAccessory(this, existingAccessory, vehicle);
-              // update accessory cache with any changes to the accessory details and information
-              this.api.updatePlatformAccessories([existingAccessory]);
-            } else if (!vehicle) {
-              // it is possible to remove platform accessories at any time using `api.unregisterPlatformAccessories`, eg.:
-              // remove platform accessories when no longer present
-              this.api.unregisterPlatformAccessories(
-                PLUGIN_NAME,
-                PLATFORM_NAME,
-                [existingAccessory],
-              );
-              this.log.info(
-                'Removing existing accessory from cache:',
-                existingAccessory.displayName,
-              );
-            }
-          } else {
-            if (!vehicle) {
-              this.log.warn('Vehicle not found', vin);
-              continue;
-            }
-            // the accessory does not yet exist, so we need to create it
-            this.log.info('Adding new accessory:', vehicle.nickname());
+    // bluelinky logs in exactly once, at construction. Until a login
+    // succeeds the cached accessories are in HomeKit with no handlers behind
+    // them, so a tap on the lock shows it locking while nothing is sent - and
+    // without a retry that lasted until Homebridge restarted. The usual
+    // trigger is a Pi that boots faster than the router after a power cut.
+    let loginRetryMs = 0;
+    const retryLogin = (reason: string): void => {
+      loginRetryMs = loginRetryMs
+        ? Math.min(loginRetryMs * 2, MAX_LOGIN_RETRY_MS)
+        : INITIAL_LOGIN_RETRY_MS;
+      this.log.warn(
+        `${reason} - retrying in ${Math.round(loginRetryMs / 60000)} min`,
+      );
+      setTimeout(() => client.login(), loginRetryMs).unref?.();
+    };
 
-            // create a new accessory
-            const accessory = new this.api.platformAccessory(
-              vehicle.nickname(),
-              uuid,
-            );
-
-            // store a copy of the device object in the `accessory.context`
-            // the `context` property can be used to store any data about the accessory you may need
-            accessory.context.device = vehicle.vehicleConfig;
-            accessory.context.device.maxRange = maxRange;
-
-            // create the accessory handler for the newly create accessory
-            // this is imported from `platformAccessory.ts`
-            new VehicleAccessory(this, accessory, vehicle);
-
-            // link the accessory to your platform
-            this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [
-              accessory,
-            ]);
-          }
+    client.on('ready', vehicles => {
+      this.log.debug('Client Ready');
+      // An account with no vehicles at all is not a state anyone configures
+      // a VIN for, so treat it as a bad response and ask again rather than
+      // concluding every configured vehicle has gone.
+      if (!vehicles.length) {
+        retryLogin('Hyundai returned no vehicles for this account');
+        return;
+      }
+      // One vehicle failing must not stop the rest being set up. Errors
+      // thrown in here would otherwise surface as unhandled rejections, since
+      // this runs on an event callback.
+      for (const { vin, maxRange } of this.config.vehicles) {
+        try {
+          this.setUpVehicle(client, vin, maxRange);
+        } catch (e) {
+          this.log.error(`Failed to set up vehicle ${vin}`, e);
         }
-      } catch (e) {
-        this.log.error('Failed to set up vehicles', e);
       }
     });
-    client.on('error', async err => {
+    client.on('error', err => {
+      if (isLoginRejected(err)) {
+        // Retrying cannot fix a wrong password, and repeated failed logins
+        // against the account are best avoided.
+        this.log.error(
+          'Hyundai rejected the login - check the username, password and ' +
+            'region, then restart Homebridge.',
+          err,
+        );
+        return;
+      }
       this.log.error('Client Error', err);
+      retryLogin('Login failed');
     });
 
     const uuids = (<HyundaiConfig>this.config).vehicles?.map(({ vin }) =>
@@ -179,6 +155,99 @@ export class HyundaiPlatform implements DynamicPlatformPlugin {
       }
     }
   }
+
+  private setUpVehicle(
+    client: BlueLinky,
+    vin: string,
+    maxRange: number | undefined,
+  ): void {
+    const uuid = this.api.hap.uuid.generate(vin);
+    const existingAccessory = this.accessories.find(
+      accessory => accessory.UUID === uuid,
+    );
+    this.log.debug('Fetching vehicle:', vin);
+    const vehicle = findVehicle(client, vin);
+    this.log.debug('Vehicle found', vehicle?.vehicleConfig);
+
+    if (!vehicle) {
+      if (existingAccessory) {
+        // Keep it. This used to unregister the accessory, which deletes it
+        // from HomeKit along with its room, scenes and automations - far too
+        // much to hang on one response from Hyundai. Taking the VIN out of
+        // the config still removes it - see the end of discoverDevices.
+        this.log.warn(
+          `Vehicle ${vin} was not on the account - leaving its accessory in ` +
+            'HomeKit without controls. Remove the VIN from the config to ' +
+            'delete it.',
+        );
+      } else {
+        this.log.warn('Vehicle not found', vin);
+      }
+      return;
+    }
+
+    if (existingAccessory) {
+      this.log.info(
+        'Restoring existing accessory from cache:',
+        existingAccessory.displayName,
+      );
+      existingAccessory.context.device = vehicle.vehicleConfig;
+      existingAccessory.context.device.maxRange = maxRange;
+      // create the accessory handler for the restored accessory
+      // this is imported from `platformAccessory.ts`
+      new VehicleAccessory(this, existingAccessory, vehicle);
+      // update accessory cache with any changes to the accessory details and information
+      this.api.updatePlatformAccessories([existingAccessory]);
+      return;
+    }
+
+    // the accessory does not yet exist, so we need to create it
+    this.log.info('Adding new accessory:', vehicle.nickname());
+
+    // create a new accessory
+    const accessory = new this.api.platformAccessory(vehicle.nickname(), uuid);
+
+    // store a copy of the device object in the `accessory.context`
+    // the `context` property can be used to store any data about the accessory you may need
+    accessory.context.device = vehicle.vehicleConfig;
+    accessory.context.device.maxRange = maxRange;
+
+    // create the accessory handler for the newly create accessory
+    // this is imported from `platformAccessory.ts`
+    new VehicleAccessory(this, accessory, vehicle);
+
+    // link the accessory to your platform
+    this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [
+      accessory,
+    ]);
+  }
+}
+
+// bluelinky's getVehicle throws when the account has vehicles but not this
+// one, rather than returning undefined as its signature says. Thrown inside
+// the setup loop, that stopped every vehicle listed after a mistyped VIN.
+function findVehicle(client: BlueLinky, vin: string): Vehicle | undefined {
+  try {
+    return client.getVehicle(vin);
+  } catch {
+    return undefined;
+  }
+}
+
+// A 4xx from the login endpoint means Hyundai refused the credentials;
+// anything else (no network, DNS, a 5xx, a timeout, rate limiting) can clear
+// up by itself.
+// bluelinky wraps the HTTP error, so the status is on the original.
+function isLoginRejected(error: unknown): boolean {
+  const status = (error as { source?: { statusCode?: number } })?.source
+    ?.statusCode;
+  return (
+    status !== undefined &&
+    status >= 400 &&
+    status < 500 &&
+    status !== 408 &&
+    status !== 429
+  );
 }
 
 function redactCredentials(config: HyundaiConfig): HyundaiConfig {
