@@ -61,11 +61,14 @@ export class Lock extends HyundaiService {
     if (this.commandInFlight) {
       return;
     }
+    this.settle();
+  }
 
-    // Settle the target state onto whatever the vehicle actually reports.
-    // HomeKit renders a lock whose target disagrees with its current state as
-    // permanently "Locking..."/"Unlocking..." with a spinner, so a command the
-    // vehicle never carried out would otherwise spin forever.
+  // Settle the target state onto whatever the vehicle actually reports.
+  // HomeKit renders a lock whose target disagrees with its current state as
+  // permanently "Locking..."/"Unlocking..." with a spinner, so a command the
+  // vehicle never carried out would otherwise spin forever.
+  private settle(): void {
     if (this._shouldLock !== undefined && this._shouldLock !== this.isLocked) {
       this.log.debug(
         `Vehicle reports ${this.isLocked ? 'locked' : 'unlocked'} but ` +
@@ -94,9 +97,7 @@ export class Lock extends HyundaiService {
           this.log.error('Lock Fail', reason);
           respond(reason);
         })
-        .finally(() => {
-          this.commandInFlight = false;
-        });
+        .finally(() => this.commandFinished());
       return;
     }
 
@@ -111,9 +112,7 @@ export class Lock extends HyundaiService {
         this.log.error('Lock Fail', reason);
         respond(reason);
       })
-      .finally(() => {
-        this.commandInFlight = false;
-      });
+      .finally(() => this.commandFinished());
   }
   unlock(cb): void {
     this.log.info('Unlocking Vehicle');
@@ -128,9 +127,7 @@ export class Lock extends HyundaiService {
           this.log.error('Unlock Fail', reason);
           respond(reason);
         })
-        .finally(() => {
-          this.commandInFlight = false;
-        });
+        .finally(() => this.commandFinished());
       return;
     }
 
@@ -145,9 +142,7 @@ export class Lock extends HyundaiService {
         this.log.error('Unlock Fail', reason);
         respond(reason);
       })
-      .finally(() => {
-        this.commandInFlight = false;
-      });
+      .finally(() => this.commandFinished());
   }
   get lockCurrentState(): number {
     const { LockCurrentState } = this.Characteristic;
@@ -172,17 +167,36 @@ export class Lock extends HyundaiService {
   }
   set shouldLock(value: boolean) {
     this._shouldLock = value;
-    // Check on status & reset after 1 minute. This has to be a timeout, not
-    // an interval - an interval here is never cleared, so every lock/unlock
-    // leaks another timer that polls Hyundai's API once a minute for as long
-    // as Homebridge runs (the intended refresh rate is once an hour).
+    this.scheduleReset();
+  }
+
+  private commandFinished(): void {
+    this.commandInFlight = false;
+    // Start the reset over from here, so there is always one after the
+    // command - the one armed when it was sent may have come and gone while
+    // it was still in flight.
+    this.scheduleReset();
+  }
+
+  // Check on status & reset after 1 minute. This has to be a timeout, not
+  // an interval - an interval here is never cleared, so every lock/unlock
+  // leaks another timer that polls Hyundai's API once a minute for as long
+  // as Homebridge runs (the intended refresh rate is once an hour).
+  private scheduleReset(): void {
     if (this.resetTimer) {
       clearTimeout(this.resetTimer);
     }
     this.resetTimer = setTimeout(() => {
-      this.va.fetchStatus();
-      this._shouldLock = undefined;
       this.resetTimer = undefined;
+      // Commands routinely take longer than this to resolve. Clearing the
+      // requested state underneath one made the lock read back as its old
+      // state while the command was still running. commandFinished() re-arms
+      // this once it resolves.
+      if (this.commandInFlight) {
+        return;
+      }
+      this.settle();
+      this.va.fetchStatus();
     }, 1000 * 60);
   }
 }

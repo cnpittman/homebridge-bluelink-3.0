@@ -58,9 +58,7 @@ export class Ignition extends HyundaiService {
           this.log.error('Start Fail', reason);
           respond(reason);
         })
-        .finally(() => {
-          this.commandInFlight = false;
-        });
+        .finally(() => this.commandFinished());
       return;
     }
 
@@ -75,9 +73,7 @@ export class Ignition extends HyundaiService {
         this.log.error('Start Fail', reason);
         respond(reason);
       })
-      .finally(() => {
-        this.commandInFlight = false;
-      });
+      .finally(() => this.commandFinished());
   }
   stop(cb): void {
     this.log.info('Stopping Vehicle');
@@ -92,9 +88,7 @@ export class Ignition extends HyundaiService {
           this.log.error('Stop Fail', reason);
           respond(reason);
         })
-        .finally(() => {
-          this.commandInFlight = false;
-        });
+        .finally(() => this.commandFinished());
       return;
     }
 
@@ -109,9 +103,7 @@ export class Ignition extends HyundaiService {
         this.log.error('Stop Fail', reason);
         respond(reason);
       })
-      .finally(() => {
-        this.commandInFlight = false;
-      });
+      .finally(() => this.commandFinished());
   }
 
   setCurrentState(status: VehicleStatus): void {
@@ -127,10 +119,14 @@ export class Ignition extends HyundaiService {
       return;
     }
 
-    // Push even when the reading has not changed. A command the vehicle never
-    // carried out leaves HomeKit showing the state that was requested, and
-    // since the reading did not change there would otherwise be nothing to
-    // correct it - the switch stays stuck on.
+    this.settle(changed);
+  }
+
+  // Push even when the reading has not changed. A command the vehicle never
+  // carried out leaves HomeKit showing the state that was requested, and
+  // since the reading did not change there would otherwise be nothing to
+  // correct it - the switch stays stuck on.
+  private settle(changed = false): void {
     const pending = this._shouldTurnOn;
     this._shouldTurnOn = undefined;
     if (changed || (pending !== undefined && pending !== !!this.isOn)) {
@@ -139,20 +135,40 @@ export class Ignition extends HyundaiService {
       this.service?.updateCharacteristic(this.Characteristic.On, !!this.isOn);
     }
   }
+
+  private commandFinished(): void {
+    this.commandInFlight = false;
+    // Start the reset over from here, so there is always one after the
+    // command - the one armed when it was sent may have come and gone while
+    // it was still in flight.
+    this.scheduleReset();
+  }
+
   get shouldTurnOn(): boolean | undefined {
     return this._shouldTurnOn;
   }
   set shouldTurnOn(value: boolean | undefined) {
     this._shouldTurnOn = value;
-    // Check on status & reset after 1 minute. Replaces any timer already
-    // pending rather than stacking another one per command.
+    this.scheduleReset();
+  }
+
+  // Check on status & reset after 1 minute. Replaces any timer already
+  // pending rather than stacking another one per command.
+  private scheduleReset(): void {
     if (this.resetTimer) {
       clearTimeout(this.resetTimer);
     }
     this.resetTimer = setTimeout(() => {
-      this.va.fetchStatus();
-      this._shouldTurnOn = undefined;
       this.resetTimer = undefined;
+      // Commands routinely take longer than this to resolve. Clearing the
+      // pending state underneath one left its completion nothing to compare
+      // the vehicle's reading against, so a start the car never carried out
+      // stayed showing On. commandFinished() re-arms this once it resolves.
+      if (this.commandInFlight) {
+        return;
+      }
+      this.settle();
+      this.va.fetchStatus();
     }, 1000 * 60);
   }
 }
