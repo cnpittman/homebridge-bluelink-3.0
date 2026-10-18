@@ -1,16 +1,31 @@
+import { Logger } from 'homebridge';
 import { HyundaiService, once } from './base';
-import { VehicleStatus } from 'bluelinky/dist/interfaces/common.interfaces';
+import {
+  VehicleStartOptions,
+  VehicleStatus,
+} from 'bluelinky/dist/interfaces/common.interfaces';
+
+// Remote start runs for 1-10 minutes; the original plugin's README notes that
+// anything outside that range makes the start fail. Its settings UI
+// nonetheless defaulted the run time to 15, so a remote start configured with
+// the defaults asked for a duration the vehicle would refuse.
+const MIN_RUN_MINUTES = 1;
+const MAX_RUN_MINUTES = 10;
 
 export class Ignition extends HyundaiService {
   private isOn?: boolean;
   private _shouldTurnOn?: boolean;
   private resetTimer?: NodeJS.Timeout;
   private commandInFlight = false;
+  private remoteStart?: VehicleStartOptions;
   name = 'Ignition';
   serviceType = 'Switch';
 
   initService(): void {
     const { On } = this.Characteristic;
+    // Checked once here rather than on each start, so a bad value shows up
+    // in the startup log instead of only when a start is attempted.
+    this.remoteStart = sanitizeRemoteStart(this.config.remoteStart, this.log);
     this.service
       ?.getCharacteristic(On)
       .on('get', cb => cb(null, this.isOn ?? false))
@@ -50,7 +65,7 @@ export class Ignition extends HyundaiService {
 
     if (this.usCommandClient) {
       this.usCommandClient
-        .start(this.config.remoteStart, () => respond(null))
+        .start(this.remoteStart, () => respond(null))
         // usCommandClient already forced one refresh while confirming, so
         // read Hyundai's cache here rather than waking the car again.
         .then(() => this.va.fetchStatus(false))
@@ -63,7 +78,7 @@ export class Ignition extends HyundaiService {
     }
 
     this.vehicle
-      .start(this.config.remoteStart)
+      .start(this.remoteStart as VehicleStartOptions)
       .then(response => {
         this.log.info('Start Response', response);
         this.va.fetchStatus(true);
@@ -171,4 +186,31 @@ export class Ignition extends HyundaiService {
       this.va.fetchStatus();
     }, 1000 * 60);
   }
+}
+
+// Bring the configured run time into the range remote start accepts, rather
+// than sending a value the vehicle will refuse. Anything that isn't a number
+// gets the longest run, matching what bluelinky uses when none is given.
+function sanitizeRemoteStart(
+  options: VehicleStartOptions | undefined,
+  log: Logger,
+): VehicleStartOptions | undefined {
+  if (!options || options.igniOnDuration === undefined) {
+    return options;
+  }
+  const requested = Number(options.igniOnDuration);
+  const minutes = Number.isFinite(requested)
+    ? Math.min(
+        MAX_RUN_MINUTES,
+        Math.max(MIN_RUN_MINUTES, Math.round(requested)),
+      )
+    : MAX_RUN_MINUTES;
+  if (minutes !== requested) {
+    log.warn(
+      `remoteStart.igniOnDuration is ${options.igniOnDuration}, but remote ` +
+        `start only runs for ${MIN_RUN_MINUTES}-${MAX_RUN_MINUTES} minutes - ` +
+        `using ${minutes}. Change it in the plugin settings to silence this.`,
+    );
+  }
+  return { ...options, igniOnDuration: minutes };
 }

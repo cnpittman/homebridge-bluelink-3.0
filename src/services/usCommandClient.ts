@@ -173,7 +173,10 @@ export class UsCommandClient {
     );
   }
 
-  start(options: VehicleStartOptions, onAccepted?: () => void): Promise<void> {
+  start(
+    options: VehicleStartOptions | undefined,
+    onAccepted?: () => void,
+  ): Promise<void> {
     const merged = {
       airCtrl: false,
       airTempvalue: 70,
