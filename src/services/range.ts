@@ -1,4 +1,4 @@
-import { HyundaiService } from './base';
+import { HyundaiService, clampPercent } from './base';
 import { VehicleStatus } from 'bluelinky/dist/interfaces/common.interfaces';
 
 // HomeKit has no characteristic for distance, so estimated range cannot be
@@ -49,10 +49,6 @@ export class Range extends HyundaiService {
     if (!this.maxRange || !this.currentRange) {
       return 0;
     }
-    const pct = (this.currentRange / this.maxRange) * 100;
-    if (!Number.isFinite(pct)) {
-      return 0;
-    }
-    return Math.max(0, Math.min(100, Math.round(pct)));
+    return clampPercent((this.currentRange / this.maxRange) * 100);
   }
 }

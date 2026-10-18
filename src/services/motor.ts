@@ -1,4 +1,4 @@
-import { HyundaiService } from './base';
+import { HyundaiService, clampPercent } from './base';
 import { VehicleStatus } from 'bluelinky/dist/interfaces/common.interfaces';
 
 export class Motor extends HyundaiService {
@@ -40,7 +40,13 @@ export class Motor extends HyundaiService {
       this.currentRange = status.engine.range;
       this.log.info(`new range ${this.currentRange}`);
     }
-    if (!this.maxRange || this.currentRange > this.maxRange) {
+    // Only learn from a real reading. Without the guard, a vehicle that
+    // reports no range (with no maxRange configured) "learned" undefined and
+    // logged it on every poll.
+    if (
+      this.currentRange !== undefined &&
+      (!this.maxRange || this.currentRange > this.maxRange)
+    ) {
       this.maxRange = this.currentRange;
       this.log.info(`maxRange is ${this.maxRange}`);
     }
@@ -90,14 +96,4 @@ export class Motor extends HyundaiService {
       return StatusLowBattery.BATTERY_LEVEL_NORMAL;
     }
   }
-}
-
-// BatteryLevel is a whole percentage. A range ratio produces fractions, and
-// range briefly exceeding the learned maximum would push it past 100, both of
-// which the characteristic rejects.
-function clampPercent(value: number): number {
-  if (!Number.isFinite(value)) {
-    return 0;
-  }
-  return Math.max(0, Math.min(100, Math.round(value)));
 }

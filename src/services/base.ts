@@ -80,3 +80,13 @@ export function once(cb): (reason?) => void {
     cb(reason ?? null);
   };
 }
+
+// Percentage characteristics take whole numbers from 0 to 100. A range ratio
+// produces fractions, and range briefly exceeding the learned maximum would
+// push it past 100, both of which the characteristic rejects.
+export function clampPercent(value: number): number {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+  return Math.max(0, Math.min(100, Math.round(value)));
+}
