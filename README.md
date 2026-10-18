@@ -57,7 +57,7 @@ A [Homebridge](https://homebridge.io) plugin that connects your Hyundai or Kia t
 
 * `vehicles.maxRange` is optional
 * `remoteStart.airCtrl` turns on the HVAC; `airTempvalue` is in Fahrenheit
-* `remoteStart.igniOnDuration` must be 1–10, or remote start fails
+* `remoteStart.igniOnDuration` is the run time in minutes, 1–10. Values outside that range are clamped (with a warning in the log), since the vehicle refuses them
 
 ### Keeping status current
 
@@ -156,7 +156,7 @@ Other regions (CA/EU) are unchanged and still use bluelinky's built-in methods.
 
 ## Known Issues
 
-**Status refresh delay** — per Hyundai's [rate limits](https://github.com/Hacksore/bluelinky/wiki/API-Rate-Limits), status updates hourly. Changes made elsewhere (Bluelink app, key fob) may take up to an hour to appear.
+**Status refresh delay** — status is read from Hyundai's cache every `statusInterval` minutes (15 by default, minimum 5), so changes made elsewhere (Bluelink app, key fob) can take that long to appear. See [Keeping status current](#keeping-status-current).
 
 **One request at a time** — Hyundai tracks a single outstanding remote request per vehicle; while one is queued the official app reports `[HT_533] a previous request is pending`. A forced status refresh is itself a remote request, so it can't be used to confirm a command that's still in flight.
 
