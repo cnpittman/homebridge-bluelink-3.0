@@ -34,6 +34,17 @@ export class Lock extends HyundaiService {
               'already in progress for this vehicle',
           );
           cb(null);
+          // HomeKit records an acknowledged write as the new target, so the
+          // tile would otherwise show the ignored request until the command
+          // in flight finished and its reset fired - up to three minutes.
+          // Put back what is actually being done, once HomeKit has committed
+          // the write (it does so inside cb, so the next turn is after it).
+          setImmediate(() =>
+            this.service?.updateCharacteristic(
+              LockTargetState,
+              this.lockTargetState,
+            ),
+          );
           return;
         }
 

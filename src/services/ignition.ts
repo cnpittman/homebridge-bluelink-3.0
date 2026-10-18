@@ -47,6 +47,14 @@ export class Ignition extends HyundaiService {
               'already in progress for this vehicle',
           );
           cb(null);
+          // As for the lock: HomeKit records the acknowledged write, so put
+          // the switch back to what the command in flight is doing.
+          setImmediate(() =>
+            this.service?.updateCharacteristic(
+              On,
+              this._shouldTurnOn ?? !!this.isOn,
+            ),
+          );
           return;
         }
 
