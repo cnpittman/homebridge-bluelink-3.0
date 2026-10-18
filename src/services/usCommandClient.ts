@@ -248,7 +248,21 @@ export class UsCommandClient {
 
     extraHeaders['REFRESH'] = 'false';
 
-    const response = await this.request('POST', path, body, extraHeaders);
+    // Resolved once per command, and reused for every check that follows.
+    // A failed lookup is deliberately not cached (see lookupGeneration), so
+    // resolving per request meant that while the enrollment endpoint was
+    // failing, each of the up to two dozen transaction checks repeated the
+    // lookup and logged another warning. Each new command still looks it up
+    // afresh, which is what keeps a transient failure from sticking.
+    const generation = await this.getGeneration();
+
+    const response = await this.request(
+      'POST',
+      path,
+      body,
+      extraHeaders,
+      generation,
+    );
     const responseText = await safeText(response);
 
     if (!response.ok) {
@@ -282,7 +296,7 @@ export class UsCommandClient {
     const transactionId = extractTransactionId(response);
     if (transactionId) {
       this.log.debug(`${label} transaction id: ${transactionId}`);
-      await this.followTransaction(label, transactionId);
+      await this.followTransaction(label, transactionId, generation);
       return;
     }
 
@@ -301,6 +315,7 @@ export class UsCommandClient {
   private async followTransaction(
     label: string,
     transactionId: string,
+    generation: string,
   ): Promise<void> {
     const deadline = Date.now() + TRANSACTION_TIMEOUT_MS;
     let attempt = 0;
@@ -309,17 +324,32 @@ export class UsCommandClient {
       attempt += 1;
       await sleep(TRANSACTION_POLL_MS);
 
-      const response = await this.request(
-        'GET',
-        'rmt/getRunningStatus',
-        undefined,
-        {
-          tid: transactionId,
-          login_id: this.vehicle.userConfig.username ?? '',
-          service_type: 'REMOTE_POLL',
-          REFRESH: 'false',
-        },
-      );
+      // The command has already been accepted by the time this runs, so a
+      // failed check is a question that went unanswered, not a failed
+      // command. Letting it throw reported an accepted lock as "Lock Fail"
+      // and skipped the status read that would have shown what the car did.
+      let response: Response;
+      try {
+        response = await this.request(
+          'GET',
+          'rmt/getRunningStatus',
+          undefined,
+          {
+            tid: transactionId,
+            login_id: this.vehicle.userConfig.username ?? '',
+            service_type: 'REMOTE_POLL',
+            REFRESH: 'false',
+          },
+          generation,
+        );
+      } catch (error) {
+        this.log.debug(
+          `${label} transaction check ${attempt} could not reach Hyundai, ` +
+            'will try again',
+          error,
+        );
+        continue;
+      }
       const text = await safeText(response);
       this.log.debug(
         `${label} transaction check ${attempt}: HTTP ${response.status}`,
@@ -406,8 +436,8 @@ export class UsCommandClient {
     path: string,
     body: Record<string, unknown> | undefined,
     extraHeaders?: Record<string, string>,
-    // Set only by the enrollment lookup itself, which cannot wait on the
-    // generation it is in the process of resolving.
+    // Passed by a command and its transaction checks, which resolve the
+    // generation once between them. Anything else looks it up per request.
     knownGeneration?: string,
   ): Promise<Response> {
     await this.vehicle.controller.refreshAccessToken();
