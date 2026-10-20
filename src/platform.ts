@@ -86,6 +86,20 @@ export class HyundaiPlatform implements DynamicPlatformPlugin {
       );
       return;
     }
+    // bluelinky's US client only knows Hyundai's service - Kia runs a
+    // separate one in the US - so this pairing otherwise dies on a bare
+    // "Constructor kia is not managed". The schema still offers Kia, since
+    // Canada and Europe do support it.
+    if (
+      this.config.credentials.region === 'US' &&
+      this.config.credentials.brand === 'kia'
+    ) {
+      this.log.error(
+        'Kia is not supported in the US region - only Hyundai is. Kia works ' +
+          'in Canada and Europe.',
+      );
+      return;
+    }
 
     const client = new BlueLinky(this.config.credentials);
 

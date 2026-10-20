@@ -26,21 +26,15 @@
             "oneOf": [
               {
                 "title": "United States",
-                "enum": [
-                  "US"
-                ]
+                "enum": ["US"]
               },
               {
                 "title": "Canada",
-                "enum": [
-                  "CA"
-                ]
+                "enum": ["CA"]
               },
               {
                 "title": "Europe",
-                "enum": [
-                  "EU"
-                ]
+                "enum": ["EU"]
               }
             ]
           },
@@ -49,18 +43,15 @@
             "type": "string",
             "required": true,
             "default": "hyundai",
+            "description": "Kia is supported in Canada and Europe only. In the United States, only Hyundai works.",
             "oneOf": [
               {
                 "title": "Hyundai",
-                "enum": [
-                  "hyundai"
-                ]
+                "enum": ["hyundai"]
               },
               {
                 "title": "Kia",
-                "enum": [
-                  "kia"
-                ]
+                "enum": ["kia"]
               }
             ]
           },
