@@ -3,29 +3,31 @@ name: build
 on: [push, pull_request]
 
 jobs:
-    build:
-        runs-on: ubuntu-latest
+  build:
+    runs-on: ubuntu-latest
 
-        strategy:
-            matrix:
-                # the Node.js versions to build on
-                node-version: [12.x, 13.x, 14.x, 15.x]
+    strategy:
+      matrix:
+        # The Node.js versions Homebridge 2 supports. package.json's
+        # engines floor is 20.18.
+        node-version: [20.x, 22.x, 24.x]
 
-        steps:
-            - uses: actions/checkout@v2
+    steps:
+      - uses: actions/checkout@v7
 
-            - name: Use Node.js ${{ matrix.node-version }}
-              uses: actions/setup-node@v2.5.1
-              with:
-                  node-version: ${{ matrix.node-version }}
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
 
-            - name: Install dependencies
-              run: npm install
+      - name: Install dependencies
+        run: npm ci
 
-            - name: Lint the project
-              run: npm run lint
+      - name: Lint the project
+        run: npm run lint
 
-            - name: Build the project
-              run: npm run build
-              env:
-                  CI: true
+      - name: Build the project
+        run: npm run build
+        env:
+          CI: true
